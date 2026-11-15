@@ -33,11 +33,11 @@
 
 **Interfaces:** owned `/recording/channels` create/list/get/update; channel-scoped session create/list; owned `/recording/sessions/{id}` get/status update. Exact shapes and invariants come from the spec. The future capture supervisor consumes these persisted records rather than a new independent queue.
 
-- [ ] Write validation and authenticated PostgreSQL-backed tests for the acceptance requirements, including the five review-focus cases.
-- [ ] Run the tests and record expected missing-feature failures before implementation. Use a disposable database, never an existing user database.
-- [ ] Implement the smallest service/repository/schema/router changes satisfying those tests. Use database transactions/constraints for race safety, not per-process locks.
-- [ ] Run the focused tests to green, then relevant existing auth/health/task regressions.
-- [ ] Document endpoints and bookkeeping-only behavior in `docs/recording.md` and update the API/docs index. Add the required changelog entry when the review URL exists.
+- [x] Write validation and authenticated PostgreSQL-backed tests for the acceptance requirements, including the five review-focus cases.
+- [x] Run the tests and record expected missing-feature failures before implementation. Use a disposable database, never an existing user database.
+- [x] Implement the smallest service/repository/schema/router changes satisfying those tests. Use database transactions/constraints for race safety, not per-process locks.
+- [x] Run the focused tests to green, then relevant existing auth/health/task regressions.
+- [x] Document endpoints and bookkeeping-only behavior in `docs/recording.md` and update the API/docs index. Add the required changelog entry when the review URL exists.
 - [ ] Review the whole diff, fix material findings, commit and push the feature branch. Create a draft PR within the user's fork, never against upstream.
 
 ## Follow-on slices

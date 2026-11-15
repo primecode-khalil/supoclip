@@ -1,0 +1,160 @@
+{
+  "checked_utc": "2026-11-15T22:10:31.790317+00:00",
+  "queries": [
+    {
+      "kind": "issues",
+      "query": "supoclip streamlink",
+      "total_count": 0,
+      "incomplete_results": false,
+      "items": []
+    },
+    {
+      "kind": "issues",
+      "query": "supoclip rclone",
+      "total_count": 1,
+      "incomplete_results": false,
+      "items": [
+        {
+          "full_name": null,
+          "html_url": "https://github.com/scalet/megila/pull/5",
+          "title": "docs(adr): registra as decis\u00f5es-chave em MADR",
+          "description": null,
+          "state": "closed",
+          "body": "<!-- CURSOR_AGENT_PR_BODY_BEGIN -->\n## Resumo\n\nRegistra as decis\u00f5es de arquitetura do Megila em `docs/adr/`, no formato MADR 4.0.0 e em portugu\u00eas. Cada ADR tem contexto e problema, op\u00e7\u00f5es consideradas, decis\u00e3o e consequ\u00eancias. O \u00edndice lista as seis. `template.md` \u00e9 o modelo das pr\u00f3ximas.\n\n## Decis\u00f5es\n\n- **0001.** Python na orquestra\u00e7\u00e3o. Whisper (CTranslate2) e ffmpeg/libx264 j\u00e1 s\u00e3o C/C++; Rust n\u00e3o encurta esse caminho.\n- **0002.** Licen\u00e7a MIT, sem c\u00f3digo AGPL, GPL ou SSPL. SupoClip fica s\u00f3 como ideia de produto (cortes curtos), nunca como c\u00f3digo.\n- **0003.** Fila pr\u00f3pria em SQLite com WAL, `synchronous=FULL`, lease com token, heartbeat, DLQ no status `dead` e checkpoint por peda\u00e7o com SHA-256.\n- **0004.** Qualidade antes da velocidade: faster-whisper `large-v3` `int8`, x264 preset `slow` CRF 19, overlays ASS compilados pelo Megila, resumo em v\u00e1rias passagens sem molde, gates de VMAF que falham fechado.\n- **0005.** Modelo de texto plug\u00e1vel, local por padr\u00e3o. Chave externa s\u00f3 no keyring do sistema, nunca em log, fila ou arquivo de configura\u00e7\u00e3o.\n- **0006.** Processamento e armazenamento locais. Backup com rclone (Drive \u00e9 um remote poss\u00edvel) e worker remoto (Colab ou outra m\u00e1quina) s\u00e3o opt-in. O worker n\u00e3o abre o SQLite.\n\n`README.md`, `CHANGELOG.md` e `mkdocs.yml` n\u00e3o foram alterados.\n\n## Linha para o CHANGELOG\n\nNa se\u00e7\u00e3o de adi\u00e7\u00f5es:\n\n```markdown\n- ADRs 0001 a 0006 em `docs/adr/`, no formato MADR, com \u00edndice e modelo para decis\u00f5es novas.\n```\n\n## Entrada de nav para o MkDocs\n\nCom `docs_dir: docs`:\n\n```yaml\n- Decis\u00f5es arquiteturais: adr/index.md\n```\n\n## Valida\u00e7\u00e3o\n\n`npx --yes markdownlint-cli@0.50.0 --config docs/adr/.markdownlint.yaml \"docs/adr/**/*.md\"` terminou sem erro. Nenhum servi\u00e7o pago foi usado.\n\n<!-- CURSOR_AGENT_PR_BODY_END -->\n\n<div><a href=\"https://cursor.com/agents/bc-c24b8abf-cea1-5f64-86a7-4dbd1f664caa?cursor_ref=pr_footer&cursor_cta=open_in_web\"><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://cursor.com/assets/images/open-in-web-dark.png\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://cursor.com/assets/images/open-in-web-light.png\"><img alt=\"Open in Web\" width=\"114\" height=\"28\" src=\"https://cursor.com/assets/images/open-in-web-dark.png\"></picture></a>&nbsp;<a href=\"https://cursor.com/background-agent?bcId=bc-c24b8abf-cea1-5f64-86a7-4dbd1f664caa&cursor_ref=pr_footer&cursor_cta=open_in_cursor\"><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://cursor.com/assets/images/open-in-cursor-dark.png\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://cursor.com/assets/images/open-in-cursor-light.png\"><img alt=\"Open in Cursor\" width=\"131\" height=\"28\" src=\"https://cursor.com/assets/images/open-in-cursor-dark.png\"></picture></a>&nbsp;</div>\n\n",
+          "fork": null
+        }
+      ]
+    },
+    {
+      "kind": "issues",
+      "query": "supoclip autovod",
+      "total_count": 0,
+      "incomplete_results": false,
+      "items": []
+    },
+    {
+      "kind": "issues",
+      "query": "supoclip livestream",
+      "total_count": 1,
+      "incomplete_results": false,
+      "items": [
+        {
+          "full_name": null,
+          "html_url": "https://github.com/FujiwaraChoki/supoclip/pull/356",
+          "title": "fix(preflight): say a source may be live when its length can't be verified",
+          "description": null,
+          "state": "closed",
+          "body": "## Problem\n\nOn Nov 10 one user tried to create a task from an active YouTube live stream 13 times. For an active stream, the YouTube Data API reports `duration: P0D`. `get_youtube_video_info` returned that zero without trying the other provider. The preflight then showed the generic `503 VIDEO_METADATA_UNAVAILABLE` (\"try again shortly\"), so retrying was the obvious next step. No minutes were charged.\n\n## Approach\n\nThis PR decides on **length only**. It does not detect live status, so it never tells a user that a video *is* live. When a provider answers but gives no positive length, after the bounded fallback below, the user gets:\n\n> We couldn't verify this {YouTube|Twitch|Kick} video's length. It may be a livestream that's still in progress, which isn't supported yet. If it's a finished video, try again shortly; otherwise wait until the stream ends and use the completed recording. No minutes were used.\n\nThe response is `422 VIDEO_DURATION_UNAVAILABLE`, with the usual `{code, message}` detail. No task is created, no job is queued and no minutes are charged.\n\n### YouTube (`youtube_utils.py`, `api/routes/tasks.py`)\n- If a metadata provider returns no positive length, the other provider gets **one** try under the existing preflight deadline. This is metadata only and downloads nothing. If neither returns a length, the first result is returned and the preflight gives the 422 above.\n- If no provider answers at all (exceptions, nothing returned), the response is still `503 VIDEO_METADATA_UNAVAILABLE`. Timeout and geo-restriction keep their existing codes.\n\n### Twitch / Kick (`stream_source.py`, `api/routes/tasks.py`)\n- `fetch_stream_info` already moves through its bounded chain: yt-dlp proxy and direct, then the cheap metadata actor. It never runs parsebird. It now records whether any provider *answered without a length*. If no provider produced a length, it raises `StreamDurationUnavailableError`, a subclass of `StreamSourceError`, and the route turns that into the 422 above.\n- If every provider simply failed, the response is still `422 VIDEO_UNAVAILABLE` (\"couldn't fetch\"). Private and subscriber-only VODs keep their message. Channel links are still rejected by `detect_stream_source` before any metadata call.\n\n### Unchanged\n- A positive length goes through the plan cap (`VIDEO_TOO_LONG`), the billing check sized to that length, and task creation exactly as before.\n\n## Web / iOS\n\nThere are no client changes. The web create proxy passes `detail` through, and `normalizeMessage` shows `detail.message`. iOS should show the message the same way it does for the other 422 preflight codes. I couldn't check that because the app's source isn't in this repo.\n\n## Tests\n\n- New `tests/unit/test_duration_unavailable_preflight.py`, with every provider mocked:\n  - **YouTube:** a zero length falls back and succeeds; a valid first result never calls the fallback; zero plus zero, or zero plus an error, gives one call each and an unverified result; all providers failing still returns `None`.\n  - **YouTube task creation:** the incident path (yt-dlp gives no length, the Data API gives `P0D`) returns the 422 with the \"may be a livestream\" message; a fetch failure still returns the 503; a positive length is billed for that length; the plan cap still applies.\n  - **Twitch and Kick:** a zero or missing length from every provider gives `StreamDurationUnavailableError`, with at most one cheap actor run and never parsebird; zero from yt-dlp then an actor success is billed normally; provider failures stay plain fetch failures; a positive length from the first provider runs no actor.\n  - **Twitch/Kick task creation:** the 422 message for each platform; a fetch failure stays `VIDEO_UNAVAILABLE`; a positive length is billed; the plan cap still applies; a channel link is rejected before any metadata call.\n  - Every rejection case asserts there was no task, no enqueue and no billing check sized to a duration.\n- `test_task_duration_preflight.py`: no metadata at all gives a 503; metadata without a usable length (`{}`, `None`, `0`, `-1`, `NaN`, `True`) gives a 422.\n- `test_youtube_utils.py`: the provider-selection mocks now carry a real duration, so \"fallback should not run\" still means what it says.\n- Full `tests/unit` run (backend image, disposable Redis): **2608 passed, 4 failed, 9 skipped**. The same 4 fail on `origin/main`: `test_source_identity::test_duplicate_copy_is_translated_in_every_app_language`, two in `test_video_cleanup`, and `test_workflow_notes_contract::test_the_scan_sees_the_planners`.\n- I didn't run the integration tests, because they need Postgres.\n\n## Limitations\n\n- A live Twitch or Kick VOD that reports a **positive, growing** length isn't caught. It goes through the normal path, as it does today. This PR only covers sources whose length is zero or missing.\n- A finished video whose providers all briefly report no length gets the \"may be a livestream\" message instead of a plain \"try again\". The message suggests retrying for that reason.\n- Other callers of `get_youtube_video_info` (the worker and the Apify quality cap) also get the one extra metadata try when the first provider returns no length.\n\n\ud83e\udd16 Generated with [Claude Code](https://claude.com/claude-code)\n",
+          "fork": null
+        }
+      ]
+    },
+    {
+      "kind": "issues",
+      "query": "supoclip \"watcher\"",
+      "total_count": 1,
+      "incomplete_results": false,
+      "items": [
+        {
+          "full_name": null,
+          "html_url": "https://github.com/jcmd7/supoclip/pull/1",
+          "title": "Add Mission Control hub gateway and clip skill infrastructure",
+          "description": null,
+          "state": "closed",
+          "body": "## Summary\n\nThis PR introduces two major new systems to the SupoClip ecosystem:\n\n1. **Mission Control Hub Gateway** \u2014 A lightweight federated tool hub that aggregates status, news, and market data from multiple independent services (SupoClip, Flowsint, MiroFish, changedetection.io, RSSHub, etc.) into a single dashboard.\n\n2. **Clip Skill** \u2014 A comprehensive AI video clipper skill system with modular scripts for downloading, transcribing, analyzing, cutting, stitching, and publishing clips.\n\n## Key Changes\n\n### Hub Gateway (`hub/gateway/`)\n- **`main.py`** \u2014 FastAPI service exposing:\n  - `/api/modules` \u2014 Module registry from `modules.json`\n  - `/api/status` \u2014 Live health checks of all registered services\n  - `/api/news` \u2014 Aggregated RSS/Atom feed items with caching\n  - `/api/markets` \u2014 Polymarket/Kalshi prediction market data with 24h deltas\n  - `/api/events` \u2014 Alert log from the watcher\n  - `/` \u2014 Static dashboard\n- **`watcher.py`** \u2014 Background asyncio loop that monitors markets and HN, fires alerts via ntfy push notifications based on configurable rules (market moves, HN points, keyword matching)\n- **`history.py`** \u2014 SQLite-backed market snapshot history for change-over-time tracking\n- **Dashboard** (`dashboard/`) \u2014 Single-page app with:\n  - Module cards showing live service health\n  - News feed aggregation\n  - Prediction markets browser with 24h volume/delta\n  - Clip library panel\n  - Real-time status pill and briefing section\n- **`modules.json`** \u2014 Registry of hub modules with health URLs and metadata\n- **Docker Compose** (`docker-compose.hub.yml`) \u2014 Orchestrates gateway, changedetection.io, RSSHub, and ntfy\n- **Makefile** \u2014 Commands to setup vendored modules, start/stop services\n\n### Clip Skill (`.claude/skills/clip/`)\n- **`SKILL.md`** \u2014 Comprehensive documentation of the clip pipeline and agent workflow\n- **`scripts/download.py`** \u2014 Download videos from 1800+ sites (YouTube, Twitch, Kick, etc.) via yt-dlp\n- **`scripts/transcribe.py`** \u2014 Word-level transcription with faster-whisper, WhisperX, or AssemblyAI\n- **`scripts/cut_clip.py`** \u2014 Core clip generation with:\n  - 9:16 vertical framing with face-centered crop (MediaPipe \u2192 OpenCV \u2192 Haar cascade fallback)\n  - Word-synced karaoke captions in 5 templates (default, hormozi, mrbeast, minimal, tiktok)\n  - Platform export presets (TikTok, Reels, Shorts) with matching bitrates\n  - B-roll overlay support\n  - Optional static hook title\n- **`scripts/transcribe.py`** \u2014 Multi-engine transcription (faster-whisper, WhisperX with diarization, AssemblyAI)\n- **`scripts/stitch.py`** \u2014 Concatenate clips with optional crossfade or stinger transitions\n- **`scripts/publish.py`** \u2014 Publish clips to YouTube Shorts or via webhook (n8n/Zapier integration)\n- **`scripts/library.py`** \u2014 Register finished clips into the shared library that the hub dashboard reads\n- **`scripts/broll.py`** \u2014 Fetch stock footage from Pexels API\n- **`scripts/render.py`** \u2014 Render segments into vertical clips with captions\n\n### Hub Infrastructure\n- **`hub/README.md`** \u2014 Architecture overview and module descriptions\n- **`hub/setup.sh`** \u2014 Clone/update vendored modules (Flowsint, MiroFish, Firecrawl, Perplexica)\n- **`.gitignore`** \u2014 Ignore `.clips/` directory and gateway history DB\n\n## Notable Implementation Details\n\n- **Health checks** use configurable `{host}` placeholder (localhost for direct run, `host.docker.internal` in Docker) to reach services on the host\n\nhttps://claude.ai/code/session_01LcrAYLYbFzrAYvD1tZhxo5",
+          "fork": null
+        }
+      ]
+    },
+    {
+      "kind": "repositories",
+      "query": "supoclip live fork:true",
+      "total_count": 1,
+      "incomplete_results": false,
+      "items": [
+        {
+          "full_name": "OPPAILUVR/supoclip",
+          "html_url": "https://github.com/OPPAILUVR/supoclip",
+          "title": null,
+          "description": "Autonomous AI Live Stream Clipper & YouTube Shorts Engine with multi-streamer monitoring, auto-reframing, and virality scoring",
+          "state": null,
+          "body": null,
+          "fork": false
+        }
+      ]
+    },
+    {
+      "kind": "repositories",
+      "query": "supoclip recording fork:true",
+      "total_count": 0,
+      "incomplete_results": false,
+      "items": []
+    },
+    {
+      "kind": "repositories",
+      "query": "supoclip archive fork:true",
+      "total_count": 0,
+      "incomplete_results": false,
+      "items": []
+    },
+    {
+      "kind": "repositories",
+      "query": "supoclip streamlink in:readme fork:true",
+      "total_count": 1,
+      "incomplete_results": false,
+      "items": [
+        {
+          "full_name": "digitalcr8tive/montio",
+          "html_url": "https://github.com/digitalcr8tive/montio",
+          "title": null,
+          "description": "Local-first AI clipping, precision captions, review, and publishing workflow",
+          "state": null,
+          "body": null,
+          "fork": false
+        }
+      ]
+    },
+    {
+      "kind": "repositories",
+      "query": "supoclip rclone in:readme fork:true",
+      "total_count": 3,
+      "incomplete_results": false,
+      "items": [
+        {
+          "full_name": "scalet/megila",
+          "html_url": "https://github.com/scalet/megila",
+          "title": null,
+          "description": null,
+          "state": null,
+          "body": null,
+          "fork": false
+        },
+        {
+          "full_name": "jafshare/GithubTrending",
+          "html_url": "https://github.com/jafshare/GithubTrending",
+          "title": null,
+          "description": null,
+          "state": null,
+          "body": null,
+          "fork": false
+        },
+        {
+          "full_name": "AnEntrypoint/awesome-github",
+          "html_url": "https://github.com/AnEntrypoint/awesome-github",
+          "title": null,
+          "description": "awesome projects on github",
+          "state": null,
+          "body": null,
+          "fork": false
+        }
+      ]
+    },
+    {
+      "kind": "repositories",
+      "query": "supoclip autovod in:readme fork:true",
+      "total_count": 0,
+      "incomplete_results": false,
+      "items": []
+    }
+  ]
+}
