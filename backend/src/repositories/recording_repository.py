@@ -1,4 +1,6 @@
 """Owned PostgreSQL persistence; locks serialize registrations and state reports."""
+from datetime import datetime
+
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +12,10 @@ from ..recording.errors import RecordingError
 class RecordingRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    async def current_timestamp(self) -> datetime:
+        """Use the database clock that owns lifecycle ordering constraints."""
+        return (await self.db.execute(select(func.clock_timestamp()))).scalar_one()
 
     async def commit(self) -> None:
         try:

@@ -45,7 +45,7 @@ New sessions start in `created`. Report status with a body such as `{"status":"r
 | `interrupted` | `recording`, `failed`, `cancelled` |
 | `completed`, `failed`, `cancelled` | No different status |
 
-Repeating the current status succeeds without changing timestamps. Invalid transitions return `409`. The first transition to `recording` sets `started_at` once; resuming after interruption preserves it. Entering a terminal state sets `ended_at` once. A session that fails or is cancelled before recording has no `started_at`. Session identity and settings snapshots cannot be edited.
+Repeating the current status succeeds without changing timestamps. Invalid transitions return `409`. The first transition to `recording` sets `started_at` once; resuming after interruption preserves it. Entering a terminal state sets `ended_at` once. Lifecycle timestamps use PostgreSQL's clock after locking the session, so differing API-host clocks do not break database ordering constraints. A session that fails or is cancelled before recording has no `started_at`. Session identity and settings snapshots cannot be edited.
 
 Session responses include `id`, `channel_id`, `external_id`, `status`, `settings_snapshot`, `started_at`, `ended_at`, `created_at` and `updated_at`. The snapshot contains the channel's validated `platform`, `handle`, `url`, `name`, `quality` and `enabled` at registration. Responses contain no local file paths or credentials.
 

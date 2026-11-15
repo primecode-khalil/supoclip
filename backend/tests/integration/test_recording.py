@@ -232,3 +232,38 @@ async def test_active_session_remains_exclusive_after_start_or_interruption(clie
     assert (await transition(client, owner, session["id"], state)).status_code == 200
     assert (await register(client, owner, item["id"], "another-event")).status_code == 409
     assert (await register(client, owner, item["id"])).json()["id"] == session["id"]
+
+
+@pytest.mark.parametrize("reported_state", ["recording", "cancelled"])
+async def test_lifecycle_uses_database_time_when_api_clock_is_skewed(
+    client, owners, db_session, monkeypatch, reported_state
+):
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from src.services import recording_service
+
+    owner = owners[0]
+    item = await channel(client, owner)
+    session = (await register(client, owner, item["id"])).json()
+    database_before = (
+        await db_session.execute(text("SELECT clock_timestamp()"))
+    ).scalar_one()
+    # Host clocks can differ between API replicas and the database server.
+    monkeypatch.setattr(
+        recording_service,
+        "datetime",
+        SimpleNamespace(now=lambda *_: datetime(2000, 1, 1, tzinfo=timezone.utc)),
+        raising=False,
+    )
+
+    response = await transition(client, owner, session["id"], reported_state)
+
+    assert response.status_code == 200, response.text
+    result = response.json()
+    field = "started_at" if reported_state == "recording" else "ended_at"
+    actual = datetime.fromisoformat(result[field].replace("Z", "+00:00"))
+    database_after = (
+        await db_session.execute(text("SELECT clock_timestamp()"))
+    ).scalar_one()
+    assert database_before <= actual <= database_after

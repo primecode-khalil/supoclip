@@ -1,6 +1,4 @@
 """Recording registry and lifecycle rules; this service never starts capture."""
-from datetime import datetime, timezone
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..recording.errors import RecordingError
@@ -57,7 +55,7 @@ class RecordingService:
             raise RecordingError(
                 f"Cannot transition from {session.status} to {payload.status}", 409
             )
-        now = datetime.now(timezone.utc)
+        now = await self.repository.current_timestamp()
         if payload.status == "recording" and session.started_at is None:
             session.started_at = now
         if payload.status in {"completed", "failed", "cancelled"}:
