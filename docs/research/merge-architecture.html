@@ -1,0 +1,19 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+*{box-sizing:border-box}body{margin:0;font-family:var(--font-sans);color:var(--foreground);font-size:14px;line-height:1.45}.caption{margin:0 0 14px;color:var(--muted-foreground);font-size:12px}.core{padding:16px;border:1px solid var(--border);background:var(--card);border-radius:var(--radius)}.core strong{display:block;margin-bottom:6px}.details{color:var(--muted-foreground);font-size:12px}.flow{display:grid;grid-template-columns:1fr 24px 1fr 24px 1fr;align-items:stretch;gap:0;margin:12px 0}.node{padding:12px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius);min-width:0}.node strong{display:block;margin:5px 0 7px;font-size:13px}.arrow{align-self:center;text-align:center;color:var(--muted-foreground);font-size:19px}.tag{font-size:10px;display:inline-block;color:var(--primary);font-weight:600;letter-spacing:.02em}.new{color:var(--warning)}.paired{display:grid;grid-template-columns:1fr 1fr;gap:12px}.branch{padding:14px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius)}.branch h3{font-size:14px;margin:5px 0 9px}.branch p{margin:0;color:var(--muted-foreground);font-size:12px}.branch ul{margin:10px 0 0;padding-left:17px;font-size:12px}.strip{margin-top:12px;padding:12px 16px;background:var(--secondary);border-radius:var(--radius);font-size:12px;color:var(--muted-foreground)}.strip strong{color:var(--foreground)}.bottom{font-size:12px;color:var(--muted-foreground);margin:12px 0 0}@media(max-width:480px){.flow{grid-template-columns:1fr}.arrow{padding:4px;transform:rotate(90deg)}.paired{grid-template-columns:1fr}}
+</style></head><body>
+<p class="caption">Proposed merged product · Existing capabilities retained; integration work called out explicitly.</p>
+<div class="core"><span class="tag">SUPOCLIP FOUNDATION</span><strong>One UI · REST / CLI / MCP · Accounts · PostgreSQL</strong><div class="details">Keep existing workflows, Clip Studio, captions, framing, shares, storage, scheduling and analytics.</div></div>
+<div class="flow">
+<div class="node"><span class="tag">PRESERVE BOTH</span><strong>Imports + live capture</strong><div class="details">YouTube / Twitch / Kick VODs, uploaded files, channel monitoring and recording.</div></div>
+<div class="arrow">→</div>
+<div class="node"><span class="tag new">EXTEND SHARED MODEL</span><strong>Sessions, media &amp; timing</strong><div class="details">Owned assets, finalized segments, gap maps, effective profiles and durable jobs.</div></div>
+<div class="arrow">→</div>
+<div class="node"><span class="tag">SELECTABLE PROVIDERS</span><strong>Transcribe + analyze</strong><div class="details">AssemblyAI / Whisper / faster-whisper; SupoClip ranking or audio-enriched analysis.</div></div>
+</div>
+<div class="paired">
+<section class="branch"><span class="tag">ARCHIVE BRANCH</span><h3>Full VODs stay first-class</h3><p>Preserve py-autovod’s archive workflow independently of AI clipping.</p><ul><li>Original capture, remux, optional re-encode</li><li>Local retention and rclone destinations</li><li>Full-VOD YouTube delivery via new adapter</li></ul></section>
+<section class="branch"><span class="tag">EDITORIAL BRANCH</span><h3>Keep the complete studio</h3><p>Highlights, series, topic clips, recap and trailer feed the existing editor.</p><ul><li>Clean / padded / captioned renditions</li><li>Drafts, AI edits, B-roll and source maps</li><li>Final export selected for publishing</li></ul></section>
+</div>
+<div class="strip"><strong>Shared delivery and recovery:</strong> immutable output revisions · separate worker capacity · retries and reconciliation · dependency-aware retention.</div>
+<p class="bottom">Additional development: near-live windows and deduplication, Facebook provider, new recording UI/API/MCP tools. Platform approval remains destination-specific. This design has not been implemented or load-tested.</p>
+</body></html>

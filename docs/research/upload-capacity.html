@@ -1,0 +1,12 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+:root{color-scheme:light dark}*{box-sizing:border-box}body{margin:0;font-family:var(--font-sans);color:var(--foreground)}.note{font-size:13px;color:var(--muted-foreground);line-height:1.5;margin:0 0 16px}svg{width:100%;height:240px;display:block}.label{fill:var(--foreground);font:13px var(--font-sans)}.small{fill:var(--muted-foreground);font:12px var(--font-sans)}.grid{stroke:var(--border);stroke-width:1}.bar{fill:var(--chart-1)}.cap{stroke:var(--warning);stroke-width:2;stroke-dasharray:5 4}.foot{font-size:12px;color:var(--muted-foreground);line-height:1.5;margin:8px 0 0}a{color:var(--primary)}</style></head><body>
+<p class="note"><strong style="color:var(--foreground)">Capture-to-upload capacity</strong> · One streamer, non-overlapping 10-minute chunks. Each chunk submitted as a new upload.</p>
+<svg viewBox="0 0 700 240" role="img" aria-label="4 hours of capture uses 24 uploads, 8 hours uses 48 uploads, 12 hours uses 72 uploads. SupoClip defaults to 20 uploads per user per day.">
+<line class="grid" x1="130" y1="25" x2="130" y2="190"/><line class="grid" x1="255" y1="25" x2="255" y2="190"/><line class="grid" x1="380" y1="25" x2="380" y2="190"/><line class="grid" x1="505" y1="25" x2="505" y2="190"/><line class="grid" x1="630" y1="25" x2="630" y2="190"/>
+<text class="label" x="4" y="59">4 hours/day</text><rect class="bar" x="130" y="34" width="150" height="36" rx="4"/><text class="label" x="290" y="59">24</text>
+<text class="label" x="4" y="119">8 hours/day</text><rect class="bar" x="130" y="94" width="300" height="36" rx="4"/><text class="label" x="440" y="119">48</text>
+<text class="label" x="4" y="179">12 hours/day</text><rect class="bar" x="130" y="154" width="450" height="36" rx="4"/><text class="label" x="590" y="179">72</text>
+<line class="cap" x1="255" y1="18" x2="255" y2="192"/>
+<text class="small" x="130" y="212" text-anchor="middle">0</text><text class="small" x="255" y="212" text-anchor="middle">20</text><text class="small" x="380" y="212" text-anchor="middle">40</text><text class="small" x="505" y="212" text-anchor="middle">60</text><text class="small" x="630" y="212" text-anchor="middle">80 uploads</text>
+<text class="small" x="265" y="13">Default daily cap</text></svg>
+<p class="foot">The cap is configurable: size it for the capture workload and benchmark worker throughput. More overlapping windows increase submissions unless filtered before upload. Source: SupoClip source audit at commit e42e93b.</p></body></html>
