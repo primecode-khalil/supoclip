@@ -38,7 +38,7 @@
 - [x] Implement the smallest service/repository/schema/router changes satisfying those tests. Use database transactions/constraints for race safety, not per-process locks.
 - [x] Run the focused tests to green, then relevant existing auth/health/task regressions.
 - [x] Document endpoints and bookkeeping-only behavior in `docs/recording.md` and update the API/docs index. Add the required changelog entry when the review URL exists.
-- [ ] Review the whole diff, fix material findings, commit and push the feature branch. Create a draft PR within the user's fork, never against upstream.
+- [x] Review the whole diff, fix material findings, commit and push the feature branch. Create a draft PR within the user's fork, never against upstream.
 
 ## Follow-on slices
 
