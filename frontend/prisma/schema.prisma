@@ -97,6 +97,8 @@ model User {
   pending_plan            String? @db.VarChar(20)
   pending_plan_invoice_id String? @db.VarChar(255)
 
+  recording_channels RecordingChannel[]
+
   // Relationships
   stripe_migration StripeAccountMigration?
   tasks         Task[]
@@ -490,4 +492,43 @@ model UserFeatureTour {
   @@id([user_id, tour_id])
   @@index([tour_id], map: "ix_user_feature_tours_tour")
   @@map("user_feature_tours")
+}
+
+// Bookkeeping owned by the backend recording API. PostgreSQL check constraints
+// and the partial active-session unique index are maintained by the SQL migration.
+model RecordingChannel {
+  id         String   @id @default(uuid()) @db.VarChar(36)
+  user_id    String   @db.VarChar(36)
+  platform   String   @db.VarChar(20)
+  handle     String   @db.VarChar(255)
+  url        String   @db.VarChar(500)
+  name       String   @db.VarChar(120)
+  enabled    Boolean  @default(true)
+  quality    String   @default("best") @db.VarChar(255)
+  created_at DateTime @default(now()) @db.Timestamptz
+  updated_at DateTime @default(now()) @db.Timestamptz
+
+  user     User               @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  sessions RecordingSession[]
+
+  @@unique([user_id, platform, handle], map: "uq_recording_channel_identity")
+  @@map("recording_channels")
+}
+
+model RecordingSession {
+  id                String    @id @default(uuid()) @db.VarChar(36)
+  channel_id        String    @db.VarChar(36)
+  external_id       String    @db.VarChar(255)
+  status            String    @default("created") @db.VarChar(20)
+  settings_snapshot Json      @db.JsonB
+  started_at        DateTime? @db.Timestamptz
+  ended_at          DateTime? @db.Timestamptz
+  created_at        DateTime  @default(now()) @db.Timestamptz
+  updated_at        DateTime  @default(now()) @db.Timestamptz
+
+  channel RecordingChannel @relation(fields: [channel_id], references: [id], onDelete: Cascade)
+
+  @@unique([channel_id, external_id], map: "uq_recording_session_external_id")
+  @@index([channel_id, created_at, id], map: "ix_recording_sessions_channel_created")
+  @@map("recording_sessions")
 }

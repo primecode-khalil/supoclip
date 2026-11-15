@@ -187,6 +187,8 @@ def create_app(
             headers={TRACE_HEADER: trace_id},
         )
 
+    from .api.routes.recording import router as recording_router
+    app.include_router(recording_router)
     app.include_router(tasks.router)
     from .api.routes.clip_exports import router as clip_export_router
     from .api.routes.editor import router as editor_router

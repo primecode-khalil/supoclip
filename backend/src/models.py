@@ -372,3 +372,51 @@ class ProcessingCache(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class RecordingChannel(Base):
+    """Owned immutable platform identity with editable capture settings."""
+
+    __tablename__ = "recording_channels"
+    __table_args__ = (
+        Index("uq_recording_channel_identity", "user_id", "platform", "handle", unique=True),
+        CheckConstraint("platform IN ('twitch', 'kick', 'youtube')", name="ck_recording_channel_platform"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid_string)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    platform: Mapped[str] = mapped_column(String(20), nullable=False)
+    handle: Mapped[str] = mapped_column(String(255), nullable=False)
+    url: Mapped[str] = mapped_column(String(500), nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=sql_text("true"))
+    quality: Mapped[str] = mapped_column(String(255), nullable=False, server_default=sql_text("'best'"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class RecordingSession(Base):
+    """Durable capture reports, independent of worker processes and local files."""
+
+    __tablename__ = "recording_sessions"
+    __table_args__ = (
+        Index("uq_recording_session_external_id", "channel_id", "external_id", unique=True),
+        Index("uq_recording_session_active", "channel_id", unique=True, postgresql_where=sql_text("status IN ('created', 'recording', 'interrupted')")),
+        Index("ix_recording_sessions_channel_created", "channel_id", "created_at", "id"),
+        CheckConstraint("status IN ('created', 'recording', 'interrupted', 'completed', 'failed', 'cancelled')", name="ck_recording_session_status"),
+        CheckConstraint("(status IN ('completed', 'failed', 'cancelled')) = (ended_at IS NOT NULL)", name="ck_recording_session_terminal_time"),
+        CheckConstraint("status NOT IN ('recording', 'interrupted', 'completed') OR started_at IS NOT NULL", name="ck_recording_session_started_time"),
+        CheckConstraint("status <> 'created' OR started_at IS NULL", name="ck_recording_session_created_time"),
+        CheckConstraint("started_at IS NULL OR started_at >= created_at", name="ck_recording_session_started_order"),
+        CheckConstraint("ended_at IS NULL OR ended_at >= COALESCE(started_at, created_at)", name="ck_recording_session_ended_order"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid_string)
+    channel_id: Mapped[str] = mapped_column(String(36), ForeignKey("recording_channels.id", ondelete="CASCADE"), nullable=False)
+    external_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=sql_text("'created'"))
+    settings_snapshot: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
