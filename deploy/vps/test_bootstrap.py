@@ -76,6 +76,12 @@ class BootstrapTests(unittest.TestCase):
         self.execute(fake)
         self.assertIn([str(self.directory / "compose.sh"), "pull", "--ignore-buildable", "postgres", "redis", "caddy"], fake.commands)
 
+    def test_first_install_builds_each_shared_image_only_once(self):
+        fake = ComposeFake()
+        self.execute(fake)
+        builds = [command for command in fake.commands if "build" in command]
+        self.assertEqual(builds, [[str(self.directory / "compose.sh"), "build", "--pull", "backend", "frontend", "postgres"]])
+
     def test_failed_first_start_is_not_complete_and_rerun_resumes(self):
         fake = ComposeFake()
         fake.fail_all_up = True

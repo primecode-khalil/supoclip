@@ -6,6 +6,8 @@ Add a line here when a pull request changes something a user can see. Use **New*
 
 ## 2026-11-16
 
+- **Fixed:** Fresh installation builds the shared backend image once, avoiding conflicting worker-image exports on Docker's containerd image store. ([#1](https://github.com/primecode-khalil/supoclip/pull/1))
+
 - **Improved:** Install behind an existing HTTPS ingress while keeping SupoClip's HTTP port private and its account callbacks on the public HTTPS address. ([#1](https://github.com/primecode-khalil/supoclip/pull/1))
 
 - **Improved:** Reaching the daily automatic publishing limit keeps extra clips in your library while recording continues. Posts already submitted still finish or show their recovery status. ([#1](https://github.com/primecode-khalil/supoclip/pull/1))

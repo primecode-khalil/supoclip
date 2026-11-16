@@ -72,7 +72,9 @@ def initialize(directory: Path) -> None:
         print("Incomplete first installation detected; starting missing services only. Running containers will not be replaced.")
     else:
         run(["df", "-h", str(directory)])
-        run([compose, "build", "--pull"])
+        # Workers share the backend tag. Concurrent exports of that tag race on
+        # Docker's containerd image store, so build one representative per image.
+        run([compose, "build", "--pull", "backend", "frontend", "postgres"])
         run([compose, "pull", "--ignore-buildable", "postgres", "redis", "caddy"])
         run([compose, "run", "--rm", "--no-deps", "caddy", "caddy", "validate", "--config", "/etc/caddy/Caddyfile"])
 
