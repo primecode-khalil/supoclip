@@ -68,6 +68,12 @@ For capacity planning, a 6 Mbit/s stream uses approximately **2.7 GB/hour**, bef
 
 Caddy is pinned to **2.11.9**, verified against [the official release](https://github.com/caddyserver/caddy/releases/tag/v2.11.9). HTTPS mode provisions/renews certificates when DNS, public ports, and persistent certificate storage are available. [Caddy HTTPS requirements](https://caddyserver.com/docs/automatic-https)
 
+## Existing HTTPS ingress
+
+When another ingress already owns ports 80/443, first run the installer with `--no-start`. In the generated private `deploy/vps/.env`, set `VPS_HTTPS=false`, `VPS_EXTERNAL_HTTPS=true`, `APP_DOMAIN` to the public hostname, `APP_ORIGIN=https://YOUR_HOSTNAME`, and `API_ORIGIN=https://YOUR_HOSTNAME/backend`. Set `HTTP_BIND` to the private host interface reachable from that ingress (or loopback when the ingress runs on the host), and choose an unused `HTTP_PORT`. Route that hostname through your existing TLS ingress to this private HTTP listener, preserving the original Host header. Rerun `install.sh` to build and start the stack.
+
+The external mode uses a dedicated Caddy configuration that forwards the HTTPS scheme to Next.js/FastAPI. Preflight rejects wildcard/public HTTP bindings, plain-HTTP origins and conflicting Caddy-managed/external HTTPS modes. The existing ingress remains responsible for certificate issuance/renewal; SupoClip does not request a duplicate certificate. Keep the binding on a trusted network and do not expose that HTTP port publicly.
+
 ## Optional channel CLI
 
 The privileged setup CLI runs **inside the backend container**. It looks up an existing registered owner and uses the server signing key without printing it or putting it in command-line arguments. It does not create users or grant admin access. Anyone allowed to run it already has VPS/container administrator access.

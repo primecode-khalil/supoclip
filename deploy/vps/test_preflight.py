@@ -58,6 +58,53 @@ class PreflightTests(unittest.TestCase):
         mount = next(value for value in caddy["volumes"] if value["target"] == "/etc/caddy/Caddyfile")
         self.assertTrue(mount["source"].endswith("Caddyfile.https"))
 
+    def external_https_config(self):
+        services = self.config["services"]
+        services["frontend"]["environment"]["BETTER_AUTH_URL"] = "https://clips.example.com"
+        services["frontend"]["build"]["args"]["NEXT_PUBLIC_API_URL"] = "https://clips.example.com/backend"
+        services["caddy"]["environment"]["APP_DOMAIN"] = "clips.example.com"
+        for mount in services["caddy"]["volumes"]:
+            if mount["target"] == "/etc/caddy/Caddyfile":
+                mount["source"] = str(ROOT / "Caddyfile.external-https")
+        services["caddy"]["ports"] = [{"host_ip": "10.42.0.1", "published": "13107", "target": 80, "protocol": "tcp"}]
+        return self.config
+
+    def test_accepts_external_https_without_requesting_a_second_certificate(self):
+        preflight.validate(self.external_https_config(), self.directory)
+
+    def test_external_https_refuses_public_or_wildcard_http_binding(self):
+        config = self.external_https_config()
+        for host in ("0.0.0.0", "::", "144.91.80.31", ""):
+            with self.subTest(host=host):
+                config["services"]["caddy"]["ports"][0]["host_ip"] = host
+                with self.assertRaisesRegex(SystemExit, "private or loopback"):
+                    preflight.validate(config, self.directory)
+
+    def test_external_https_refuses_plain_http_origin(self):
+        config = self.external_https_config()
+        config["services"]["frontend"]["environment"]["BETTER_AUTH_URL"] = "http://clips.example.com"
+        with self.assertRaisesRegex(SystemExit, "external HTTPS proxy requires an HTTPS"):
+            preflight.validate(config, self.directory)
+
+    def test_compose_wrapper_selects_private_external_https_mode(self):
+        setup = self.directory / "external-proxy"
+        shutil.copytree(ROOT, setup, ignore=shutil.ignore_patterns("__pycache__", ".env", "rclone.conf", ".bootstrap*"))
+        environment = self.environment.replace("VPS_EXTERNAL_HTTPS=false", "VPS_EXTERNAL_HTTPS=true")
+        environment = environment.replace("http://localhost:3107", "https://clips.example.com")
+        environment = environment.replace("APP_DOMAIN=localhost", "APP_DOMAIN=clips.example.com")
+        environment = environment.replace("HTTP_BIND=0.0.0.0", "HTTP_BIND=10.42.0.1")
+        (setup / ".env").write_text(environment)
+        (setup / ".env").chmod(0o600)
+        (setup / "rclone.conf").touch(mode=0o600)
+        result = subprocess.run([str(setup / "compose.sh"), "config", "--format", "json"], capture_output=True, text=True, check=True)
+        config = json.loads(result.stdout)
+        preflight.validate(config, setup)
+        self.assertEqual(config["services"]["caddy"]["ports"][0]["host_ip"], "10.42.0.1")
+        (setup / ".env").write_text(environment.replace("VPS_HTTPS=false", "VPS_HTTPS=true"))
+        conflict = subprocess.run([str(setup / "compose.sh"), "config", "--quiet"], capture_output=True, text=True)
+        self.assertNotEqual(conflict.returncode, 0)
+        self.assertIn("not both", conflict.stderr)
+
     def test_private_initialization_never_overwrites_existing_secrets(self):
         setup = self.directory / "clean"
         setup.mkdir()

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Validate rendered deployment config without printing secret-bearing values."""
 import json
+from ipaddress import ip_address
 from pathlib import Path
 import re
 import stat
@@ -27,15 +28,30 @@ def validate(config: dict, directory: Path) -> None:
     app = urlparse(frontend["BETTER_AUTH_URL"])
     if app.scheme not in {"http", "https"} or not app.hostname or app.path not in {"", "/"}:
         fail("APP_ORIGIN must be an http(s) origin without a path.")
+    proxy_mounts = services["caddy"].get("volumes", [])
+    proxy_files = {Path(mount.get("source", "")).name for mount in proxy_mounts if mount.get("target") == "/etc/caddy/Caddyfile"}
+    external_https = "Caddyfile.external-https" in proxy_files
+    if external_https and app.scheme != "https":
+        fail("The external HTTPS proxy requires an HTTPS APP_ORIGIN.")
     if app.scheme == "https":
         domain = caddy.get("APP_DOMAIN", "")
         if not re.fullmatch(r"(?=.{1,253}$)(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}", domain):
             fail("HTTPS requires a public APP_DOMAIN hostname.")
-        proxy_mounts = services["caddy"].get("volumes", [])
-        https_proxy = any(mount.get("target") == "/etc/caddy/Caddyfile" and str(mount.get("source", "")).endswith("Caddyfile.https") for mount in proxy_mounts)
-        if domain != app.hostname or not https_proxy:
+        https_proxy = "Caddyfile.https" in proxy_files
+        if domain != app.hostname or not (https_proxy or external_https):
             fail("HTTPS origin and proxy mode must match; rerun installer --domain for first setup.")
-        if not caddy.get("ACME_EMAIL"):
+        if external_https:
+            ports = services["caddy"].get("ports", [])
+            if not ports:
+                fail("The external HTTPS proxy requires a private or loopback HTTP binding.")
+            for port in ports:
+                try:
+                    address = ip_address(port.get("host_ip", ""))
+                except ValueError:
+                    fail("The external HTTPS proxy requires a private or loopback HTTP binding.")
+                if address.is_unspecified or not (address.is_private or address.is_loopback) or port.get("target") != 80:
+                    fail("The external HTTPS proxy requires a private or loopback HTTP binding.")
+        elif not caddy.get("ACME_EMAIL"):
             fail("Set ACME_EMAIL for HTTPS certificate management.")
     if services["frontend"]["build"]["args"].get("NEXT_PUBLIC_API_URL") != frontend["BETTER_AUTH_URL"].rstrip("/") + "/backend":
         fail("API_ORIGIN must use the application origin with /backend for this proxy bundle.")
