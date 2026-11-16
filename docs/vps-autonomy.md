@@ -68,6 +68,14 @@ For capacity planning, a 6 Mbit/s stream uses approximately **2.7 GB/hour**, bef
 
 Caddy is pinned to **2.11.9**, verified against [the official release](https://github.com/caddyserver/caddy/releases/tag/v2.11.9). HTTPS mode provisions/renews certificates when DNS, public ports, and persistent certificate storage are available. [Caddy HTTPS requirements](https://caddyserver.com/docs/automatic-https)
 
+## YouTube import access
+
+An application health check does not establish that YouTube accepts the server's connection. Datacenter IPs may receive a "Sign in to confirm you're not a bot" response. This runtime reports that as `YOUTUBE_ACCESS_BLOCKED` before creating or charging a generation, rather than hiding it behind a missing-duration error.
+
+In `/admin`, the encrypted **YouTube import proxy** setting applies to metadata and media downloads. The country field supplies an optional `{country}` placeholder; the proxy also supports `{session}`. A compatible bgutil HTTP token-provider endpoint can be configured for playback challenges. These settings require working operator-provided services; the application does not purchase or provision a proxy. A **YouTube Data API key** only supplies metadata and cannot make blocked media downloads work. Local file uploads remain available. See the official [yt-dlp FAQ](https://github.com/yt-dlp/yt-dlp/wiki/FAQ) and [PO token guide](https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide) for provider requirements and limitations.
+
+The status banner is maintained by this installation's operator, not a live global YouTube health feed. First-owner bootstrap replaces only the untouched upstream incident seed on an unclaimed installation. Existing owners' and customized status records are preserved.
+
 ## Existing HTTPS ingress
 
 When another ingress already owns ports 80/443, first run the installer with `--no-start`. In the generated private `deploy/vps/.env`, set `VPS_HTTPS=false`, `VPS_EXTERNAL_HTTPS=true`, `APP_DOMAIN` to the public hostname, `APP_ORIGIN=https://YOUR_HOSTNAME`, and `API_ORIGIN=https://YOUR_HOSTNAME/backend`. Set `HTTP_BIND` to the private host interface reachable from that ingress (or loopback when the ingress runs on the host), and choose an unused `HTTP_PORT`. Route that hostname through your existing TLS ingress to this private HTTP listener, preserving the original Host header. Rerun `install.sh` to build and start the stack.

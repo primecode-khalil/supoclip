@@ -92,6 +92,8 @@ def initialize(directory: Path) -> None:
         run([compose, "exec", "-T", "postgres", "psql", "-v", "ON_ERROR_STOP=1", "-U", "supoclip", "-d", "supoclip"],
             input_text=(directory / "single-user.sql").read_text())
 
+    run([compose, "exec", "-T", "postgres", "psql", "-v", "ON_ERROR_STOP=1", "-U", "supoclip", "-d", "supoclip"],
+        input_text=(directory / "initial-service-status.sql").read_text())
     run(up)
     run([health])
     # This is the sole success marker; merely having PostgreSQL/backend containers

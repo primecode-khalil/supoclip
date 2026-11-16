@@ -31,7 +31,7 @@ class ComposeFake:
             return "frontend-id\n" if self.exposed else ""
         if command[-1].startswith("SELECT to_regclass"):
             return "t\n" if self.guard else "f\n"
-        if input_text:
+        if input_text == "TEST SINGLE OWNER GUARD":
             self.guard_installations += 1
             self.guard = True
         if "up" in command:
@@ -49,6 +49,7 @@ class BootstrapTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name)
         (self.directory / "single-user.sql").write_text("TEST SINGLE OWNER GUARD")
+        (self.directory / "initial-service-status.sql").write_text((ROOT / "initial-service-status.sql").read_text())
         self.revision = patch.object(bootstrap, "current_revision", return_value="a" * 40)
         self.revision.start()
         self.addCleanup(self.revision.stop)

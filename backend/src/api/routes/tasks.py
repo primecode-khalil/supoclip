@@ -47,7 +47,7 @@ from ...workers.job_queue import JobQueue
 from ...workers.progress import ProgressTracker
 from ...config import get_config
 from ...youtube_utils import async_get_youtube_video_info, canonical_youtube_url, has_verified_duration
-from ...youtube_proxy import YouTubeAgeRestrictedError, YouTubeGeoRestrictedError
+from ...youtube_proxy import YouTubeAccessBlockedError, YouTubeAgeRestrictedError, YouTubeGeoRestrictedError
 from ...stream_source import (
     PREFLIGHT_DEADLINE_SECONDS as STREAM_PREFLIGHT_DEADLINE_SECONDS,
     StreamDurationUnavailableError,
@@ -121,6 +121,11 @@ async def _preflight_youtube_source(url: str, duration_limit: int) -> Dict[str, 
         duration = metadata["duration"]
     except _DurationUnavailable:
         raise _duration_unavailable_error("YouTube") from None
+    except YouTubeAccessBlockedError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "YOUTUBE_ACCESS_BLOCKED", "message": f"{exc} No minutes were used."},
+        ) from None
     except YouTubeGeoRestrictedError as exc:
         raise HTTPException(
             status_code=422,

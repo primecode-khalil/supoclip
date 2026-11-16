@@ -44,6 +44,26 @@ class YouTubeDownloadError(RuntimeError):
     """A YouTube download attempt failed."""
 
 
+class YouTubeAccessBlockedError(YouTubeDownloadError):
+    """The current connection was rejected by YouTube's anti-bot check."""
+
+    def __init__(self):
+        super().__init__(
+            "YouTube blocked this server's connection. Configure a YouTube import "
+            "proxy in Admin, or upload the video file."
+        )
+
+
+def is_access_blocked_error(exc: BaseException) -> bool:
+    for error in _exception_chain(exc):
+        if isinstance(error, YouTubeAccessBlockedError):
+            return True
+        message = str(error).lower()
+        if "sign in" in message and "not a bot" in message:
+            return True
+    return False
+
+
 class YouTubeGeoRestrictedError(YouTubeDownloadError):
     """The source has region restrictions and download recovery did not succeed."""
 

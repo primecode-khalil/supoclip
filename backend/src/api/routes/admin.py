@@ -64,7 +64,22 @@ SETTING_METADATA = {
     },
     "YOUTUBE_DATA_API_KEY": {
         "label": "YouTube Data API key",
-        "description": "Optional metadata provider key.",
+        "description": "Optional metadata lookup key. This does not download videos or resolve a blocked YouTube connection.",
+        "input_type": "password",
+    },
+    "YOUTUBE_PROXY_URL": {
+        "label": "YouTube import proxy",
+        "description": "Proxy connection used for both video metadata and downloads when YouTube blocks this server. Credentials are stored encrypted. Optional {session} and {country} placeholders are supported.",
+        "input_type": "password",
+    },
+    "YOUTUBE_PROXY_COUNTRY": {
+        "label": "YouTube proxy country",
+        "description": "Optional two-letter country code used by a {country} placeholder in the proxy connection.",
+        "input_type": "text",
+    },
+    "YOUTUBE_POT_PROVIDER_URL": {
+        "label": "YouTube token provider",
+        "description": "Optional bgutil HTTP token-provider endpoint for YouTube playback challenges. This does not replace a working proxy connection.",
         "input_type": "password",
     },
     "APIFY_API_TOKEN": {
