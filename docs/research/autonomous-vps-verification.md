@@ -9,7 +9,7 @@ Verified on 16 November 2026 on branch `feat/recording-foundation`. The fork sur
 - Encrypted administration of AI and social app credentials, alongside existing account OAuth connections.
 - PostgreSQL leases with database-clock expiry and fencing, finalized CSV segments, media validation/checksums, durable overlapping windows, restart recovery and immutable work receipts.
 - Separate capture monitoring and processing tasks, disk/backlog guards, bounded retries, optional rclone archives and conservative retention.
-- Native captioned vertical rendering and score-filtered YouTube/Instagram publication. Account ownership, current destination revocation, visibility, daily limits and temporal overlap reservations are checked before new submissions.
+- Native captioned vertical rendering and score-filtered YouTube/Instagram publication. Account ownership, current destination revocation, visibility, daily submission limits and temporal overlap reservations are checked before new submissions.
 - Atomic native task/post request identities. A deleted social history row preserves a publication tombstone instead of allowing a repeated upload.
 
 ## Evidence
@@ -18,8 +18,9 @@ Verified on 16 November 2026 on branch `feat/recording-foundation`. The fork sur
 | --- | --- |
 | Complete backend suite in the Debian ARM64 image, real PostgreSQL and Redis, actual FFmpeg/libass | 3,493 passed, 2 skipped |
 | Additional fresh-schema compatibility and recording integration checks after the final additive migration | 36 passed |
-| Complete frontend suite on the local Node 26 host | 980 passed with `--no-experimental-webstorage` |
-| Real Next.js browser workflows with demo API fixtures | 8 passed; desktop/mobile screenshots, GIF and video recorded |
+| Complete frontend suite on the local Node 26 host | 981 passed with `--no-experimental-webstorage` |
+| Real Next.js browser workflows with demo API fixtures | 8 passed; desktop/mobile screenshots, GIF and video recorded; the daily-cap notice was also checked in the running app |
+| Publication-cap restart/receipt handling and recording/social regressions | 300 passed |
 | Linux installer/configuration/recovery checks | 14 passed |
 | Prisma validation, TypeScript, focused frontend lint and shell syntax | Passed |
 | Backend/frontend production ARM64 image builds | Passed |

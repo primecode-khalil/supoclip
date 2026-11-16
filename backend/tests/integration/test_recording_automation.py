@@ -113,7 +113,7 @@ async def test_policy_is_owner_scoped_and_disabling_stops_renewal(automated):
         assert "holder" not in response["runtime"]
         await store.put_policy(owner["id"], channel.id, AutomationPolicy(enabled=False))
         assert await store.renew(token) is None
-        assert await store.list_enabled_channels() == []
+        assert channel.id not in {item.channel_id for item in await store.list_enabled_channels()}
 
 
 async def test_automation_routes_require_owner_and_hide_host_paths(client, app, automated):

@@ -29,6 +29,7 @@ export interface RecordingWindow {
   id: string; session_id: string; epoch: string; sequence: number;
   start_seconds: number; end_seconds: number; status: "pending" | "submitting" | "processing" | "publishing" | "completed" | "blocked";
   task_id: string | null; attempts: number; next_attempt_at: string | null; last_error: string | null;
+  publication_capped?: boolean;
   created_at: string;
 }
 export interface WindowList { windows: RecordingWindow[]; total: number }

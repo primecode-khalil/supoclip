@@ -57,3 +57,18 @@ def test_invalid_window_registration_rejected(key, value):
     values[key] = value
     with pytest.raises(ValidationError):
         WindowRegistration(**values)
+
+
+def test_window_response_exposes_publication_limit_without_private_metadata():
+    from datetime import datetime, timezone
+    from src.recording.automation_models import RecordingWindow
+    from src.recording.automation_schema import WindowResponse
+
+    now = datetime.now(timezone.utc)
+    row = RecordingWindow(id="window", channel_id="channel", session_id="session", epoch="epoch", sequence=0,
+        sha256="a" * 64, size_bytes=1, start_seconds=0.0, end_seconds=600.0, overlap_seconds=0.0,
+        status="completed", task_id=None, attempts=0, next_attempt_at=None, last_error=None,
+        created_at=now, updated_at=now, details={"publication_capped": True, "segments": [{"path": "private/path"}]})
+    result = WindowResponse.model_validate(row).model_dump()
+    assert result["publication_capped"] is True
+    assert "details" not in result and "source_path" not in result

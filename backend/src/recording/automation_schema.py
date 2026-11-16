@@ -106,6 +106,7 @@ class WindowResponse(BaseModel):
     end_seconds: float
     overlap_seconds: float
     status: WindowStatus
+    publication_capped: bool = False
     task_id: str | None
     attempts: int
     next_attempt_at: datetime | None

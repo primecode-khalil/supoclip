@@ -12,3 +12,10 @@ it("retries the saved window and surfaces a rejected recovery request", async ()
   expect(await screen.findByRole("alert")).toHaveTextContent("Check the publishing account before retrying");
   expect(screen.getByRole("button", { name: "Retry window 1" })).toBeEnabled();
 });
+
+it("explains that the daily limit keeps extra clips in the library", () => {
+  const capped: WindowList = { total: 1, windows: [{ ...data.windows[0], status: "completed", last_error: null, publication_capped: true }] };
+  render(<WindowActivity data={capped} onRetry={vi.fn()} />);
+  expect(screen.getByText("Daily publishing limit reached. Remaining clips are saved in your library.")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Open clips and generation" })).toHaveAttribute("href", "/tasks/generation");
+});

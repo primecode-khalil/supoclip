@@ -18,8 +18,8 @@ from .capture import _terminate
 from .pipeline import NativeClient, PipelineBlocked, PipelineRetry, choose_clips, contained_path, retry_delay, overlaps_reserved, _seconds
 
 
-class AllowanceDeferred(PipelineRetry):
-    pass
+class PublicationLimitReached(Exception):
+    """Stop automatic selection; existing receipts still need monitoring."""
 
 
 async def store_call(method: str, *args, **kwargs):
@@ -113,7 +113,7 @@ class AutomationPipeline:
                       AND status <> 'cancelled'
                 """), {"user": channel.user_id})).scalar_one()
                 if count >= policy.max_posts_per_day:
-                    raise AllowanceDeferred("Daily publication limit reached; clips retained until the next UTC day")
+                    raise PublicationLimitReached("Daily publication limit reached; remaining clips stay in the library")
                 await db.commit()
                 await self._live(token)
                 reservation = {"account_id": account_id, "clip_id": clip["id"], "start": start, "end": end}
@@ -135,9 +135,8 @@ class AutomationPipeline:
             raise
         except PipelineBlocked as exc:
             await self._update(token, window, status="blocked", last_error=str(exc), next_attempt_at=None)
-        except AllowanceDeferred as exc:
-            tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-            await self._update(token, window, next_attempt_at=tomorrow, last_error=str(exc))
+        except PublicationLimitReached:
+            await store_call("mark_publication_capped", token, window.id)
         except (PipelineRetry, OSError, ValueError, KeyError) as exc:
             attempts = window.attempts + 1
             exhausted = attempts - window.details.get("retry_base", 0) >= 12
@@ -196,28 +195,29 @@ class AutomationPipeline:
         if any(identity not in current_clips for identity in details["selected_clip_ids"]):
             raise PipelineBlocked("A selected clip was removed; review this window before publication")
         clips = [current_clips[identity] for identity in details["selected_clip_ids"]]
+        post_ids = list(details.get("post_ids", []))
         # Current policy can revoke a destination; an old window cannot grant it.
         accounts = [account for account in policy.social_account_ids if account in channel.policy.social_account_ids]
-        if not accounts or not clips:
+        if (not accounts or not clips) and not post_ids:
             await self._update(token, window, status="completed", last_error=None, next_attempt_at=None)
             return
         window = await self._update(token, window, status="publishing")
-        connections = await self.native.request(channel.user_id, "GET", "/social/connections")
-        providers = {account["id"]: account["provider"] for account in connections.get("connections", []) if account.get("status") == "active"}
-        post_ids = list(details.get("post_ids", []))
         # Explicit deletion of a known post must not resurrect its publication.
         for post_id in post_ids:
             await self.native.request(channel.user_id, "GET", f"/social/posts/{post_id}")
-        for account_id in accounts:
-            provider = providers.get(account_id)
-            if provider not in {"youtube", "instagram"}:
-                raise PipelineBlocked("Autonomous publication supports connected YouTube and Instagram accounts; review other destinations in Social settings")
-            for clip in clips:
-                post_id = await self._post(channel, token, window, clip, account_id, provider, policy, details)
-                if post_id and post_id not in post_ids:
-                    post_ids.append(post_id)
-                    details["post_ids"] = post_ids
-                    await self._update(token, window, details=details)
+        if accounts and clips and not details.get("publication_capped"):
+            connections = await self.native.request(channel.user_id, "GET", "/social/connections")
+            providers = {account["id"]: account["provider"] for account in connections.get("connections", []) if account.get("status") == "active"}
+            for account_id in accounts:
+                provider = providers.get(account_id)
+                if provider not in {"youtube", "instagram"}:
+                    raise PipelineBlocked("Autonomous publication supports connected YouTube and Instagram accounts; review other destinations in Social settings")
+                for clip in clips:
+                    post_id = await self._post(channel, token, window, clip, account_id, provider, policy, details)
+                    if post_id and post_id not in post_ids:
+                        post_ids.append(post_id)
+                        details["post_ids"] = post_ids
+                        await self._update(token, window, details=details)
         published = True
         for post_id in post_ids:
             result = await self.native.request(channel.user_id, "GET", f"/social/posts/{post_id}")

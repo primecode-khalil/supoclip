@@ -306,6 +306,31 @@ class AutomationStore:
         await self.db.commit()
         return {"windows": list(rows), "total": total}
 
+    async def mark_publication_capped(self, token: Lease, window_id: str) -> RecordingWindow:
+        """Stop new automatic posts while retaining every committed receipt.
+
+        The caller can hold a stale window from before a post was created.
+        Merge into the current locked row instead of replacing its metadata.
+        Reaching a policy limit is not a failed attempt or a timed retry.
+        """
+        _, _, now = await self._fenced(token)
+        window = (await self.db.execute(select(RecordingWindow).where(
+            RecordingWindow.id == window_id,
+            RecordingWindow.channel_id == token.channel_id,
+        ).with_for_update().execution_options(populate_existing=True))).scalar_one_or_none()
+        if window is None:
+            await self.db.rollback()
+            raise RecordingError("Window not found", 404)
+        if window.status != "publishing":
+            await self.db.rollback()
+            raise RecordingError("Only publishing work can reach the publication limit", 409)
+        window.details = {**window.details, "publication_capped": True}
+        window.next_attempt_at = None
+        window.last_error = None
+        window.updated_at = now
+        await self.db.commit()
+        return window
+
     async def retry_window(self, user_id: str, channel_id: str, window_id: str):
         """Explicit owner action opens another retry budget, keeping receipts."""
         await self._channel(channel_id, user_id, lock=True)
