@@ -736,6 +736,20 @@ async def _create_task(request: Request, db: AsyncSession, attempt: SourceAttemp
                         return duplicate_source_response(str(existing.id), existing.job_id)
                 # Create task while the source lock is held, so a second
                 # request waits and then finds this row instead of charging.
+                processing_job_id = f"submission:{secrets.token_hex(16)}"
+                initial_source_metadata = _merge_task_source_metadata(
+                    {
+                        "processing_job_id": processing_job_id,
+                        "clip_length": clip_length,
+                        "enqueued_at": datetime.now(timezone.utc).isoformat(),
+                        **({"durable_upload_request": True} if upload_request_key and _request_idempotency_key(request) else {}),
+                        **({"source_key": source_key} if source_key else {}),
+                        **_stream_resolution_metadata(stream_metadata),
+                    },
+                    source_url=raw_source["url"], source_type=source_type,
+                    output_format=output_format, add_subtitles=add_subtitles,
+                    cleanup_settings=cleanup_settings,
+                )
                 task_id = await task_service.create_task_with_source(
                     user_id=user_id,
                     url=raw_source["url"],
@@ -748,6 +762,7 @@ async def _create_task(request: Request, db: AsyncSession, attempt: SourceAttemp
                     processing_mode=processing_mode,
                     source_duration_seconds=math.ceil(duration_seconds),
                     upload_request_key=upload_request_key,
+                    initial_source_metadata=initial_source_metadata,
                     workflow=workflow_spec.workflow,
                     workflow_options=workflow_options,
                 )

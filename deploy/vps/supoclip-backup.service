@@ -1,0 +1,13 @@
+[Unit]
+Description=Back up SupoClip database and private configuration
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# Change the checkout path if the application lives elsewhere.
+WorkingDirectory=/opt/supoclip
+ExecStart=/opt/supoclip/deploy/vps/backup-db.sh /var/backups/supoclip
+User=root
+UMask=0077
+Nice=10

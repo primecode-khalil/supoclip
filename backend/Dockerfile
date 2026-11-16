@@ -6,6 +6,8 @@ FROM python:3.11.17-slim-trixie
 # and colour emoji. libass/fontconfig selects them when a chosen font lacks glyphs.
 RUN apt-get update && apt-get install -y \
     ffmpeg \
+    rclone \
+    chromium \
     tesseract-ocr \
     tesseract-ocr-eng \
     curl \
@@ -40,10 +42,16 @@ RUN uv venv .venv && \
       uv sync --frozen --extra cuda; \
     fi
 
+# Capture invokes the locked Streamlink CLI as a subprocess.
+ENV PATH="/app/.venv/bin:${PATH}"
+
 # yt-dlp and its PO-token plugin are installed from uv.lock above.
 
 # Copy source code
 COPY src/ ./src/
+COPY src/recording/chromium.sh /usr/local/bin/supoclip-chromium
+RUN chmod 0755 /usr/local/bin/supoclip-chromium
+ENV RECORDING_BROWSER_EXECUTABLE=/usr/local/bin/supoclip-chromium
 
 # Copy fonts and transitions directories
 COPY fonts/ ./fonts/

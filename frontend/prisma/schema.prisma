@@ -98,6 +98,7 @@ model User {
   pending_plan_invoice_id String? @db.VarChar(255)
 
   recording_channels RecordingChannel[]
+  social_post_requests SocialPostRequest[]
 
   // Relationships
   stripe_migration StripeAccountMigration?
@@ -346,6 +347,7 @@ model SocialPost {
   task           Task?              @relation(fields: [task_id], references: [id], onDelete: SetNull)
   social_account SocialAccount?     @relation(fields: [social_account_id], references: [id], onDelete: SetNull)
   metric_history SocialPostMetric[]
+  request_receipts SocialPostRequest[]
 
   @@index([user_id], map: "idx_social_posts_user_id")
   @@index([clip_id], map: "idx_social_posts_clip_id")
@@ -510,6 +512,9 @@ model RecordingChannel {
 
   user     User               @relation(fields: [user_id], references: [id], onDelete: Cascade)
   sessions RecordingSession[]
+  automation RecordingAutomation?
+  lease RecordingAutomationLease?
+  windows RecordingWindow[]
 
   @@unique([user_id, platform, handle], map: "uq_recording_channel_identity")
   @@map("recording_channels")
@@ -527,8 +532,72 @@ model RecordingSession {
   updated_at        DateTime  @default(now()) @db.Timestamptz
 
   channel RecordingChannel @relation(fields: [channel_id], references: [id], onDelete: Cascade)
+  windows RecordingWindow[]
 
   @@unique([channel_id, external_id], map: "uq_recording_session_external_id")
   @@index([channel_id, created_at, id], map: "ix_recording_sessions_channel_created")
   @@map("recording_sessions")
+}
+
+
+// PostgreSQL checks and partial indexes are maintained by backend SQL migrations.
+model RecordingAutomation {
+  channel_id String @id @db.VarChar(36)
+  policy Json @default("{}") @db.JsonB
+  created_at DateTime @default(now()) @db.Timestamptz
+  updated_at DateTime @default(now()) @db.Timestamptz
+  channel RecordingChannel @relation(fields: [channel_id], references: [id], onDelete: Cascade)
+  @@map("recording_automation")
+}
+
+model RecordingAutomationLease {
+  channel_id String @id @db.VarChar(36)
+  holder String @db.VarChar(255)
+  fence BigInt
+  expires_at DateTime @db.Timestamptz
+  last_heartbeat_at DateTime @db.Timestamptz
+  last_error String?
+  channel RecordingChannel @relation(fields: [channel_id], references: [id], onDelete: Cascade)
+  @@map("recording_automation_leases")
+}
+
+model RecordingWindow {
+  id String @id @default(uuid()) @db.VarChar(36)
+  channel_id String @db.VarChar(36)
+  session_id String @db.VarChar(36)
+  epoch String @db.VarChar(80)
+  sequence Int
+  source_path String @db.VarChar(1024)
+  sha256 String @db.VarChar(64)
+  size_bytes BigInt
+  start_seconds Float
+  end_seconds Float
+  overlap_seconds Float @default(0)
+  status String @default("pending") @db.VarChar(20)
+  /// tasks(id), ON DELETE SET NULL; backend owns the processing relationship.
+  task_id String? @db.VarChar(36)
+  upload_ref String? @db.VarChar(1024)
+  attempts Int @default(0)
+  next_attempt_at DateTime? @db.Timestamptz
+  last_error String?
+  details Json @default("{}") @map("metadata") @db.JsonB
+  created_at DateTime @default(now()) @db.Timestamptz
+  updated_at DateTime @default(now()) @db.Timestamptz
+  channel RecordingChannel @relation(fields: [channel_id], references: [id], onDelete: Cascade)
+  session RecordingSession @relation(fields: [session_id], references: [id], onDelete: Cascade)
+  @@unique([channel_id, session_id, epoch, sequence], map: "uq_recording_window_identity")
+  @@index([channel_id, status, next_attempt_at, created_at], map: "ix_recording_windows_pending")
+  @@map("recording_windows")
+}
+
+model SocialPostRequest {
+  user_id String @db.VarChar(36)
+  request_key String @db.VarChar(200)
+  request_hash String @db.VarChar(64)
+  post_id String? @db.VarChar(36)
+  created_at DateTime @default(now()) @db.Timestamptz
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  post SocialPost? @relation(fields: [post_id], references: [id], onDelete: SetNull)
+  @@id([user_id, request_key])
+  @@map("social_post_requests")
 }

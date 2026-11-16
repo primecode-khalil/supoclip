@@ -77,6 +77,12 @@ SETTING_METADATA = {
         "description": "Optional B-roll stock footage provider key.",
         "input_type": "password",
     },
+    "YOUTUBE_OAUTH_CLIENT_ID": {"label": "YouTube OAuth client ID", "description": "Google Cloud OAuth app used to connect YouTube accounts.", "input_type": "text"},
+    "YOUTUBE_OAUTH_CLIENT_SECRET": {"label": "YouTube OAuth client secret", "description": "Secret for the registered YouTube OAuth app.", "input_type": "password"},
+    "TIKTOK_CLIENT_KEY": {"label": "TikTok app client key", "description": "Client key for a registered TikTok developer app.", "input_type": "text"},
+    "TIKTOK_CLIENT_SECRET": {"label": "TikTok app client secret", "description": "Secret for the registered TikTok developer app.", "input_type": "password"},
+    "INSTAGRAM_APP_ID": {"label": "Instagram app ID", "description": "Meta app used to connect Instagram professional accounts.", "input_type": "text"},
+    "INSTAGRAM_APP_SECRET": {"label": "Instagram app secret", "description": "Secret for the registered Instagram app.", "input_type": "password"},
 }
 
 

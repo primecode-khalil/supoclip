@@ -501,4 +501,4 @@ If a route seems broken:
 
 ## Recording registry and sessions
 
-The authenticated backend `/recording/channels` API supports channel create/list/get/update, channel-scoped session registration/listing, and session get/status updates at `/recording/sessions/{id}`. This is durable bookkeeping; it does not start or verify capture. See [Recording registry and session ledger](./recording.md) for bodies, replay behavior, lifecycle rules and database guarantees.
+The authenticated backend `/recording/channels` API supports channel create/list/get/update, channel-scoped session registration/listing, and session get/status updates at `/recording/sessions/{id}`. Enable and configure supervised capture with GET/PUT `/recording/channels/{id}/automation`; read windows at `/recording/channels/{id}/windows` and retry blocked windows with POST `/recording/channels/{id}/windows/{window_id}/retry`. See [Recording registry and session ledger](./recording.md) for bodies, replay behavior, lifecycle rules and database guarantees.

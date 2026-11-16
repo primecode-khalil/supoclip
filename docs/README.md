@@ -43,7 +43,8 @@ If you are new to the project, start here:
   - Backend endpoints
   - Admin and billing endpoints
   - Notes on auth and streaming
-- [Recording registry and session ledger](./recording.md)
+- [Recording, automation and progress API](./recording.md)
+- [Linux installer and unattended operation](./vps-autonomy.md)
   - Owned channels and replay-safe session bookkeeping
   - Lifecycle reports, concurrency guarantees and current capture boundaries
 - [Development](./development.md)

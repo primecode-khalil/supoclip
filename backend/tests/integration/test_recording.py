@@ -205,7 +205,7 @@ async def test_additive_recording_migration_runs_twice_on_legacy_schema(db_sessi
         await db_session.execute(text("CREATE TABLE users (id VARCHAR(36) PRIMARY KEY)"))
         migrations = Path(__file__).resolve().parents[2] / "src/migrations/sql"
         for _ in range(2):
-            for migration in sorted(migrations.glob("20261116_*recording*.sql")):
+            for migration in sorted(migrations.glob("20261116_0001_recording_foundation.sql")):
                 for statement in migration.read_text().split(";"):
                     if statement.strip():
                         await db_session.execute(text(statement))

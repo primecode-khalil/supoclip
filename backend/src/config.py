@@ -248,21 +248,21 @@ class Config:
 
         # Social publishing. Each provider needs an OAuth app registered by the
         # operator; users then connect their own accounts through that app.
-        self.youtube_oauth_client_id = self._get_optional_env(
+        self.youtube_oauth_client_id = self._get_runtime_setting(
             "YOUTUBE_OAUTH_CLIENT_ID"
         ) or self._get_optional_env("GOOGLE_OAUTH_CLIENT_ID")
-        self.youtube_oauth_client_secret = self._get_optional_env(
+        self.youtube_oauth_client_secret = self._get_runtime_setting(
             "YOUTUBE_OAUTH_CLIENT_SECRET"
         ) or self._get_optional_env("GOOGLE_OAUTH_CLIENT_SECRET")
-        self.tiktok_client_key = self._get_optional_env("TIKTOK_CLIENT_KEY")
-        self.tiktok_client_secret = self._get_optional_env("TIKTOK_CLIENT_SECRET")
+        self.tiktok_client_key = self._get_runtime_setting("TIKTOK_CLIENT_KEY")
+        self.tiktok_client_secret = self._get_runtime_setting("TIKTOK_CLIENT_SECRET")
         # Until TikTok audits the app, Direct Post only accepts SELF_ONLY posts
         # from accounts set to private. Set true only after the audit passes.
         self.tiktok_app_audited = self._get_bool_env("TIKTOK_APP_AUDITED", False)
-        self.instagram_app_id = self._get_optional_env(
+        self.instagram_app_id = self._get_runtime_setting(
             "INSTAGRAM_APP_ID"
         ) or self._get_optional_env("META_APP_ID")
-        self.instagram_app_secret = self._get_optional_env(
+        self.instagram_app_secret = self._get_runtime_setting(
             "INSTAGRAM_APP_SECRET"
         ) or self._get_optional_env("META_APP_SECRET")
         # OAuth callbacks and public media fetches (Instagram pulls the video

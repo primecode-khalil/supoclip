@@ -371,7 +371,9 @@ def test_rendered_interview_keeps_every_frame_at_1080x1920(cut_clip):
     graph, _ = build_interview_filter(segments, 640, 360)
     result = subprocess.run([
         "ffmpeg", "-v", "error", "-i", str(cut_clip), "-filter_complex", graph + ";[vout]scale=54:96[p]",
-        "-map", "[p]", "-pix_fmt", "rgb24", "-f", "rawvideo", "-",
+        # concat clears the nominal frame rate. Measure every produced frame,
+        # without the rawvideo muxer falling back to 25 fps and dropping some.
+        "-map", "[p]", "-pix_fmt", "rgb24", "-fps_mode", "passthrough", "-f", "rawvideo", "-",
     ], capture_output=True, timeout=60)
     assert result.returncode == 0, result.stderr
     frames = np.frombuffer(result.stdout, np.uint8).reshape(-1, 96, 54, 3)

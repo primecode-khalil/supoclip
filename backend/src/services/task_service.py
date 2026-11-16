@@ -355,6 +355,7 @@ class TaskService(ClipEditingMixin):
         processing_mode: str = "fast",
         source_duration_seconds: Optional[int] = None,
         upload_request_key: Optional[str] = None,
+        initial_source_metadata: Optional[Dict[str, Any]] = None,
         workflow: str = "highlights",
         workflow_options: Optional[Dict[str, Any]] = None,
     ) -> str:
@@ -402,6 +403,15 @@ class TaskService(ClipEditingMixin):
         )
 
         # Create task
+        metadata = dict(initial_source_metadata or {})
+        if upload_request_key and url.startswith("upload://"):
+            metadata["upload_request_key"] = upload_request_key
+            from ..repositories.upload_repository import get_stored_upload
+
+            stored = await get_stored_upload(self.db, url)
+            if stored is not None and stored.storage_reference:
+                metadata["storage_reference"] = stored.storage_reference
+
         task_id = await self.task_repo.create_task(
             self.db,
             user_id=user_id,
@@ -417,16 +427,8 @@ class TaskService(ClipEditingMixin):
             charge_minutes=self.config.monetization_enabled,
             workflow=workflow,
             workflow_options=workflow_options,
+            **({"source_metadata": metadata} if metadata else {}),
         )
-
-        if upload_request_key and url.startswith("upload://"):
-            metadata: Dict[str, Any] = {"upload_request_key": upload_request_key}
-            from ..repositories.upload_repository import get_stored_upload
-
-            stored = await get_stored_upload(self.db, url)
-            if stored is not None and stored.storage_reference:
-                metadata["storage_reference"] = stored.storage_reference
-            await self.task_repo.save_source_metadata(self.db, task_id, metadata)
 
         logger.info(f"Created task {task_id} for user {user_id}")
         return task_id

@@ -6,7 +6,8 @@ Add a line here when a pull request changes something a user can see. Use **New*
 
 ## 2026-11-16
 
-- **Under the hood:** Recording integrations can save channel settings and register account-owned sessions with replay-safe identities and lifecycle tracking. This adds the API foundation; automatic recording and a recording screen are not available yet. ([#1](https://github.com/primecode-khalil/supoclip/pull/1))
+- **New:** Install the fork on a Linux host with one script, then use Live channels to monitor Twitch, Kick and YouTube streams, create captioned vertical clips, and publish selected clips to configured YouTube or Instagram accounts. Setup protects the first owner and keeps AI and social app credentials encrypted. ([#1](https://github.com/primecode-khalil/supoclip/pull/1))
+- **Under the hood:** Recording survives worker restarts with database leases, finalized segments, overlapping windows and durable render/publication receipts. Disk guards preserve unfinished originals, optional archives copy them offsite, and blocked work can be retried from the dashboard. ([#1](https://github.com/primecode-khalil/supoclip/pull/1))
 
 ## 2026-11-15
 

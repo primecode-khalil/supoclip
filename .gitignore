@@ -4,6 +4,11 @@ __pycache__
 *.egg-info
 .coverage
 .next/
+.next-*/
+deploy/vps/rclone.conf
+deploy/vps/.bootstrap*
+deploy/vps/.https-enabled
+deploy/vps/backups/
 logs/
 temp/
 .env

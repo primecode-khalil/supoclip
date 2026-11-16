@@ -9,7 +9,7 @@ export default async function SignUpPage() {
     <AuthFrame
       footer={<>{t("signUpPage.hasAccount")}{" "}<Link href="/sign-in" className="font-medium text-foreground underline-offset-4 hover:underline">{t("signUpPage.signIn")}</Link></>}
     >
-      <SignUp />
+      <SignUp singleUserSetup={process.env.NEXT_PUBLIC_SELF_HOST_SINGLE_USER === "true"} />
     </AuthFrame>
   );
 }

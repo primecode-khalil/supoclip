@@ -12,6 +12,7 @@ scripts
 assets
 **/node_modules
 **/.next
+**/.next-*
 **/coverage
 **/.venv
 **/__pycache__

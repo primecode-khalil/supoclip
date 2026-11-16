@@ -10,6 +10,9 @@ programmatic clients (MCP, scripts) can publish too.
 from __future__ import annotations
 
 import logging
+import hashlib
+import json
+import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -23,6 +26,8 @@ from ...config import get_config
 from ...database import get_db
 from ...media_storage import is_s3
 from ...services.social_service import SocialError, SocialService
+from ...repositories.social_repository import SocialRepository
+from ...source_identity import source_admission_lock
 from ...utils.async_helpers import run_in_thread
 
 logger = logging.getLogger(__name__)
@@ -212,6 +217,24 @@ async def create_post(request: Request, db: AsyncSession = Depends(get_db)):
     """Publish (or schedule) a clip to a connected account."""
     user_id = await _allowed_user_id(request, db)
     body = await _json_body(request)
+    key = request.headers.get("idempotency-key", "").strip()
+    if key and not re.fullmatch(r"[A-Za-z0-9._:-]{8,200}", key):
+        raise HTTPException(status_code=400, detail="Invalid idempotency key")
+    if not key:
+        return await _create_post(request, db, user_id, body)
+    request_hash = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    async with source_admission_lock(db, user_id, f"social-post:{key}"):
+        receipt = await SocialRepository.get_post_request(db, user_id, key)
+        if receipt:
+            if receipt.request_hash != request_hash:
+                raise HTTPException(status_code=409, detail="Idempotency key already used for a different publication")
+            if receipt.post_id is None:
+                raise HTTPException(status_code=410, detail="Publication history was deleted; this request will not create another upload")
+            return {"post": await SocialRepository.get_user_post(db, user_id, receipt.post_id)}
+        return await _create_post(request, db, user_id, body, key, request_hash)
+
+
+async def _create_post(request, db, user_id, body, request_key=None, request_hash=None):
     for field in ("task_id", "clip_id", "social_account_id"):
         if not body.get(field):
             raise HTTPException(status_code=422, detail=f"{field} is required")
@@ -229,6 +252,7 @@ async def create_post(request: Request, db: AsyncSession = Depends(get_db)):
             hashtags=hashtags,
             privacy_level=body.get("privacy_level"),
             scheduled_for=body.get("scheduled_for"),
+            **({"request_key": request_key, "request_hash": request_hash} if request_key else {}),
         )
     except SocialError as exc:
         raise _http_error(exc)

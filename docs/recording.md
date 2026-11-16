@@ -1,6 +1,8 @@
 # Recording registry and session ledger
 
-The backend stores owned Twitch, Kick and YouTube channels and recording-session reports in PostgreSQL. This foundation **does not start, stop, supervise, or verify a capture process**. Setting a session to `recording` records the caller's report; it is not evidence that SupoClip captured anything. There is no recorder, Streamlink integration, recording UI, media upload, retention job, or automatic clipping in this slice.
+The backend stores owned Twitch, Kick and YouTube channels, sessions, automation policies and immutable processing windows in PostgreSQL. A separate recording supervisor captures streams and feeds SupoClip's existing vertical clipping and caption pipeline. The `/recording` web dashboard configures channels and displays capture and processing progress. See [Linux installation and unattended operation](vps-autonomy.md).
+
+The manual session-report API below remains available to integrations. Setting its status to `recording` is a caller's report; supervised capture also requires an enabled automation policy and a live worker lease.
 
 Authenticate with the existing signed session headers, `Authorization: Bearer sk_...`, or `x-api-key`. Ownership comes from authentication. Missing records and another owner's records both return `404`. Requests reject unknown fields, including `user_id`, filesystem paths, worker flags and timestamps.
 
@@ -21,7 +23,7 @@ Example create body:
 
 `platform` is `twitch`, `kick`, or `youtube`. Supply a bare handle, with an optional leading `@` for YouTube. Surrounding spaces and case are normalized; URLs, paths, query strings, control characters and empty handles are rejected. Twitch accepts 3–25 ASCII letters, digits or underscores; Kick accepts 3–25 ASCII letters, digits, underscores or hyphens and cannot begin with a hyphen. YouTube accepts 3–30 Unicode letters/numbers with interior dots, underscores or hyphens. Canonical public URLs use fixed platform hosts. Identity is unique per owner and cannot be edited.
 
-`name` contains 1–120 printable characters after trimming spaces. `enabled` defaults to `true` and is a stored preference for a future supervisor. `quality` defaults to `best`; it accepts comma-separated stream names such as `1080p60,720p,best`. Each name begins with an ASCII letter or digit and then contains letters, digits, underscores or hyphens. No spaces, flags, paths or command syntax are accepted; the whole field is limited to 255 characters. Quality names are syntax-validated and do not imply availability for a particular stream.
+`name` contains 1–120 printable characters after trimming spaces. `enabled` defaults to `true` and must be enabled alongside the separate automation policy for capture. `quality` defaults to `best`; it accepts comma-separated stream names such as `1080p60,720p,best`. Each name begins with an ASCII letter or digit and then contains letters, digits, underscores or hyphens. No spaces, flags, paths or command syntax are accepted; the whole field is limited to 255 characters. Quality names are syntax-validated and do not imply availability for a particular stream.
 
 PATCH accepts only `name`, `enabled` and `quality`; supply at least one, with no null values. Channel responses include `id`, `platform`, `handle`, `url`, the three settings, `created_at` and `updated_at`.
 
@@ -55,7 +57,7 @@ Both list APIs accept `limit` (1–100, default 50) and `offset` (nonnegative, d
 
 The additive `20261116_0001_recording_foundation.sql` migration runs during backend database initialization. Root `init.sql`, SQLAlchemy models and Prisma models describe the same tables. PostgreSQL enforces per-owner channel uniqueness, per-channel external IDs, valid status/timestamp combinations and a partial unique index allowing one active (`created`, `recording`, `interrupted`) session per channel. Row locks serialize registration and lifecycle updates. Account deletion cascades through owned channels and sessions.
 
-Prisma does not represent the partial index or CHECK constraints; retain the SQL migration when changing these tables. No additional configuration or dependencies are required.
+Prisma does not represent the partial index or CHECK constraints; retain the SQL migration when changing these tables. The registry itself needs no capture dependencies. The supervisor additionally requires the locked Streamlink dependency, FFmpeg/ffprobe, persistent `CAPTURE_ROOT`, and server authentication configuration.
 
 Run focused tests using a dedicated disposable PostgreSQL database:
 
@@ -64,3 +66,25 @@ cd backend
 TEST_DATABASE_URL=postgresql+asyncpg://USER:PASSWORD@HOST:PORT/TEST_DB \
   .venv/bin/pytest tests/unit/test_recording_validation.py tests/integration/test_recording.py --no-cov
 ```
+
+
+## Automation and progress API
+
+| Method | Route | Behavior |
+| --- | --- | --- |
+| GET | `/recording/channels/{id}/automation` | Return strict policy and worker lease/heartbeat/error status |
+| PUT | `/recording/channels/{id}/automation` | Replace the owned channel policy |
+| GET | `/recording/channels/{id}/windows` | Paginated processing windows, native task IDs, attempts and errors |
+| POST | `/recording/channels/{id}/windows/{window_id}/retry` | Explicitly reopen blocked work while preserving upload/render/publication receipts |
+
+All routes use the same owner isolation and authentication as the registry. Policy defaults are disabled, 600-second segments, 60-second overlap, balanced processing, default captions, automatic clip length, score threshold 75, at most three clips per window, ten posts per UTC day, no destinations, private visibility, archives disabled and seven-day retention. Unknown fields are rejected. Connected destination IDs must be active and owned by the same user. Instagram requires explicit public visibility; autonomous TikTok and Facebook publication are unavailable. API policy replacement preserves no omitted custom settings: send the complete desired policy.
+
+`runtime.leased` means a supervisor monitors the channel, including when it is offline. It does not alone establish that media is being received. An enabled channel's active session and its finalized windows provide capture/processing evidence. The dashboard polls these APIs and follows the native task progress endpoint.
+
+The supervisor checks live/offline/unknown probe results, captures into closed MKV segments, validates CSV-finalized media with ffprobe and SHA-256, and creates MP4 windows with measured overlap where stream-copy compatibility permits. If remuxing fails, it preserves the verified original as the native input and records a preparation warning. A capture restart creates a new epoch; unavailable time is never silently concatenated across epochs.
+
+One database-clock lease per channel carries a fencing generation. Runtime writes require that generation to remain live. A renewal failure cancels processing and stops only that worker's children. Slow upload/archive work runs separately from capture's disk/backlog monitoring. PostgreSQL and persistent media survive process/container restarts; partial inputs are retained, never treated as finished work. Completed epochs are removed only after retention, finalized-file coverage, completed dependencies and any required archive acknowledgment.
+
+Window stages are `pending`, `submitting`, `processing`, `publishing`, `completed` and `blocked`. Transient failures use a bounded retry budget and backoff; render retries preserve native processing checkpoints. A daily publishing allowance defers work until the next UTC day without consuming its failure budget. Explicit owner retries open a fresh budget while keeping cumulative attempt history and immutable source/policy identity. A deleted task or uncertain external publication is blocked for review rather than silently recreated.
+
+Each native upload/task/post uses a stable request key. Explicit keyed upload task requests remain replayable after terminal status, while unkeyed interactive requests keep the original short deduplication window. Keyed social post creation stores its request receipt in the same database transaction as the post; replays return that post, differing intent returns409, and deleted history leaves a tombstone returning410. The native publisher remains responsible for remote upload handles and uncertain outcomes. Per-account source-range reservations suppress the same event in adjacent windows within one capture epoch; this is temporal overlap deduplication, not semantic similarity detection.

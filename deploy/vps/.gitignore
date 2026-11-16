@@ -1,0 +1,10 @@
+.env
+rclone.conf
+backups/
+*.dump
+*.tar.gz
+
+.bootstrap-complete
+.bootstrap-started
+.bootstrap.lock
+.bootstrap-*.tmp
