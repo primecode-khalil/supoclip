@@ -45,11 +45,14 @@ export async function POST(request: Request) {
 
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
   const normalizedApiUrl = apiUrl.replace(/\/$/, "");
+  // A dedicated binary-upload gateway can allow longer request bodies than
+  // the shared application ingress. Authorization still uses the internal API.
+  const uploadUrl = process.env.UPLOAD_PUBLIC_URL?.trim() || `${normalizedApiUrl}/upload`;
 
   return NextResponse.json(
     {
       directUpload: true,
-      uploadUrl: `${normalizedApiUrl}/upload`,
+      uploadUrl,
       headers: buildBackendAuthHeaders(session.user.id),
     },
     {

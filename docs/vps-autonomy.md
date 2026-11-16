@@ -82,6 +82,16 @@ When another ingress already owns ports 80/443, first run the installer with `--
 
 The external mode uses a dedicated Caddy configuration that forwards the HTTPS scheme to Next.js/FastAPI. Preflight rejects wildcard/public HTTP bindings, plain-HTTP origins and conflicting Caddy-managed/external HTTPS modes. The existing ingress remains responsible for certificate issuance/renewal; SupoClip does not request a duplicate certificate. Keep the binding on a trusted network and do not expose that HTTP port publicly.
 
+### Large uploads through a shared ingress
+
+The outer gateway must allow enough time to receive the entire file. Traefik's HTTP entrypoint defaults to a **60-second total request read timeout**, including the body; an otherwise healthy backend can see a disconnect while the browser receives 502. A backend response timeout or a larger file-size limit does not change that deadline. [Traefik entrypoint timeouts](https://doc.traefik.io/traefik/reference/install-configuration/entrypoints/)
+
+When the shared gateway cannot be changed globally, use a dedicated upload hostname and set `UPLOAD_PUBLIC_URL=https://UPLOAD_HOST/backend/upload` in the private environment. The app still authorizes the owner against its internal backend, then sends file bytes directly to this HTTPS endpoint. The normal API URL and object-storage multipart uploads remain independent. The upload response must allow CORS from `APP_ORIGIN`; the bundled FastAPI middleware supplies this.
+
+[traefik-upload.example.json](../deploy/vps/traefik-upload.example.json) demonstrates a hostname-scoped, TLS-terminating TCP route to the existing private Caddy gateway. Replace the hostname, namespace, service and certificate issuer to match the installation, then validate it against the cluster before applying it. Its HTTP/1.1 ALPN option matches Caddy's cleartext HTTP listener; advertising HTTP/2 here would forward decrypted HTTP/2 to a listener that does not enable h2c. Cert-manager owns issuance and renewal of the separate upload certificate. The main app keeps its existing HTTP ingress and protocol support, and other hostnames are unaffected. [Traefik TCP routing](https://doc.traefik.io/traefik/reference/routing-configuration/kubernetes/crd/tcp/ingressroutetcp/)
+
+Verify a throttled upload that lasts longer than the old deadline, including returned size/checksum and browser CORS headers, before declaring the gateway ready. This changes transport only: upload size, ownership and quota checks still apply. A default single-host Caddy installation does not need this additional gateway.
+
 ## Optional channel CLI
 
 The privileged setup CLI runs **inside the backend container**. It looks up an existing registered owner and uses the server signing key without printing it or putting it in command-line arguments. It does not create users or grant admin access. Anyone allowed to run it already has VPS/container administrator access.

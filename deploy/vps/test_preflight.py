@@ -41,6 +41,16 @@ class PreflightTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "chmod 600"):
             preflight.validate(self.config, self.directory)
 
+    def test_dedicated_upload_endpoint_requires_plain_https_address(self):
+        frontend = self.config["services"]["frontend"]["environment"]
+        for url in ("http://uploads.example.com/upload", "https://user:secret@uploads.example.com/upload", "https://uploads.example.com/upload?token=value", "https://uploads.example.com/upload#part", "https://uploads.example.com:not-a-port/upload"):
+            with self.subTest(url=url):
+                frontend["UPLOAD_PUBLIC_URL"] = url
+                with self.assertRaisesRegex(SystemExit, "UPLOAD_PUBLIC_URL"):
+                    preflight.validate(self.config, self.directory)
+        frontend["UPLOAD_PUBLIC_URL"] = "https://uploads.example.com/backend/upload"
+        preflight.validate(self.config, self.directory)
+
     def test_refuses_unprotected_setup_and_reused_server_secrets(self):
         frontend = self.config["services"]["frontend"]["environment"]
         frontend["INITIAL_SETUP_TOKEN"] = ""

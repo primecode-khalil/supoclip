@@ -6,6 +6,8 @@ Add a line here when a pull request changes something a user can see. Use **New*
 
 ## 2026-11-16
 
+- **Fixed:** Large file uploads can use a dedicated HTTPS upload gateway, avoiding a shared ingress's short request-body timeout while keeping account authorization in the app. ([#1](https://github.com/primecode-khalil/supoclip/pull/1))
+
 - **Fixed:** YouTube imports now identify server connection blocks instead of reporting an unknown video length. Configure encrypted YouTube proxy and token-provider settings in Admin; metadata API keys are labeled separately from downloads. Fresh installations also start without the copied upstream incident banner. ([#1](https://github.com/primecode-khalil/supoclip/pull/1))
 
 - **Fixed:** Fresh installation builds the shared backend image once, avoiding conflicting worker-image exports on Docker's containerd image store. ([#1](https://github.com/primecode-khalil/supoclip/pull/1))

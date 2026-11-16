@@ -28,6 +28,18 @@ def validate(config: dict, directory: Path) -> None:
     app = urlparse(frontend["BETTER_AUTH_URL"])
     if app.scheme not in {"http", "https"} or not app.hostname or app.path not in {"", "/"}:
         fail("APP_ORIGIN must be an http(s) origin without a path.")
+    upload_url = str(frontend.get("UPLOAD_PUBLIC_URL") or "").strip()
+    if upload_url:
+        try:
+            upload = urlparse(upload_url)
+            invalid = (upload.scheme != "https" or not upload.hostname or not upload.path
+                       or upload.username is not None or upload.password is not None
+                       or bool(upload.query) or bool(upload.fragment))
+            upload.port  # Validate a supplied port without exposing its value.
+        except ValueError:
+            invalid = True
+        if invalid:
+            fail("UPLOAD_PUBLIC_URL must be a full HTTPS endpoint without credentials, query or fragment.")
     proxy_mounts = services["caddy"].get("volumes", [])
     proxy_files = {Path(mount.get("source", "")).name for mount in proxy_mounts if mount.get("target") == "/etc/caddy/Caddyfile"}
     external_https = "Caddyfile.external-https" in proxy_files
