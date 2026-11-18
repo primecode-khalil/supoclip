@@ -101,6 +101,8 @@ def decrypt_setting_value(encrypted_value: str) -> str:
 
 
 async def load_runtime_settings_cache(db: AsyncSession) -> None:
+    from .home_proxy import refresh_home_proxy
+    await refresh_home_proxy(db)
     rows = await db.execute(
         text(
             """

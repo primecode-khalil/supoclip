@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import sys
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -69,6 +70,26 @@ def streamlink_command() -> list[str]:
             raise ValueError("Recording browser must be a server-configured absolute executable path")
         command += ["--webbrowser-executable", browser]
     return command
+
+
+def youtube_proxy() -> str:
+    from ..config import get_config
+    from ..youtube_proxy import render_proxy_url
+    value = get_config().youtube_proxy_url
+    return render_proxy_url(value, 'recording') if value else ''
+
+
+def youtube_command(url: str, quality: str) -> list[str]:
+    match = re.search(r'(\d+)p', quality)
+    height = min(2160, max(144, int(match[1]))) if match else 1080
+    command = [sys.executable, '-m', 'yt_dlp', '--ignore-config', '--no-playlist',
+               '--quiet', '--no-warnings', '--no-progress', '--no-cache-dir',
+               '--socket-timeout', '20', '--retries', '1', '--fragment-retries', '1',
+               '-f', f'bv[height<={height}]+ba/b[height<={height}]']
+    proxy = youtube_proxy()
+    if proxy:
+        command += ['--proxy', proxy]
+    return command + [url, '-o', '-']
 
 
 def _live_url(url: str) -> str:
@@ -159,8 +180,10 @@ async def probe_channel(url: str, timeout: float = 30) -> ProbeResult:
     source_url = _live_url(url)
     _positive_interval(timeout, "Probe timeout")
     try:
+        command = ([sys.executable, str(Path(__file__).with_name('youtube_probe.py')), source_url, youtube_proxy()]
+                   if urlsplit(source_url).hostname == 'www.youtube.com' else [*streamlink_command(), '--json', source_url])
         code, payload = await _read_json_command(
-            [*streamlink_command(), "--json", source_url],
+            command,
             timeout,
         )
     except (OSError, ValueError, asyncio.TimeoutError):
@@ -173,7 +196,7 @@ async def probe_channel(url: str, timeout: float = 30) -> ProbeResult:
     error = payload.get("error")
     if isinstance(error, str) and _EXPLICIT_OFFLINE.search(error):
         return ProbeResult(ProbeState.OFFLINE)
-    return ProbeResult(ProbeState.UNKNOWN, "probe_inconclusive")
+    return ProbeResult(ProbeState.UNKNOWN, payload.get('detail', 'probe_inconclusive'))
 
 
 def _durable_digest(path: Path) -> tuple[str, int]:
@@ -260,8 +283,8 @@ class CaptureProcess:
                     stderr=asyncio.subprocess.DEVNULL, cwd=self.directory, start_new_session=True, env=capture_environment(),
                 )
                 self._streamlink = await asyncio.create_subprocess_exec(
-                    *streamlink_command(), "--stdout",
-                    self.url, self.quality,
+                    *(youtube_command(self.url, self.quality) if urlsplit(self.url).hostname == 'www.youtube.com'
+                      else [*streamlink_command(), '--stdout', self.url, self.quality]),
                     stdin=asyncio.subprocess.DEVNULL, stdout=output_pipe,
                     stderr=asyncio.subprocess.DEVNULL, start_new_session=True, env=capture_environment(),
                 )

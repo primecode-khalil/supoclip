@@ -4,6 +4,11 @@ What changed in SupoClip for people using the product. Newest dates are first.
 
 Add a line here when a pull request changes something a user can see. Use **New**, **Improved**, **Fixed**, or **Under the hood**, describe the change in plain language, and link the pull request. Skip internal-only work, or fold it into one **Under the hood** line. Do not include customer names, email addresses, user IDs, or anything else private.
 
+## 2026-11-18
+
+- **New:** Pair your Mac from Live channels with one setup command to use its home connection for YouTube imports and live recording. The private helper reconnects automatically, starts at login, and can be disconnected from the dashboard without a VPN or router changes. Keep the Mac awake and online during capture. ([#1](https://github.com/primecode-khalil/supoclip/pull/1))
+- **Fixed:** YouTube live recording now uses the same downloader for discovery and video/audio capture, with the pinned November playback fix and clear messages when YouTube rejects the connection. ([#1](https://github.com/primecode-khalil/supoclip/pull/1))
+
 ## 2026-11-16
 
 - **Fixed:** Large file uploads can use a dedicated HTTPS upload gateway, avoiding a shared ingress's short request-body timeout while keeping account authorization in the app. ([#1](https://github.com/primecode-khalil/supoclip/pull/1))

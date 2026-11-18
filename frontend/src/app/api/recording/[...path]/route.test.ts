@@ -60,3 +60,42 @@ it("forwards only the owned-window retry endpoint", async () => {
   expect(response.status).toBe(200);
   expect(fetchBackend).toHaveBeenCalledWith("/recording/channels/one/windows/window-one/retry", expect.objectContaining({ method: "POST", userId: "owner" }));
 });
+
+it.each([
+  ["GET", ["home-proxy"]], ["POST", ["home-proxy", "setup"]], ["POST", ["home-proxy", "disconnect"]],
+])("forwards the exact admin home connection route: %s %j", async (method, path) => {
+  vi.mocked(getServerSession).mockResolvedValue({ user: { id: "owner", is_admin: true } } as never);
+  const handler = method === "GET" ? GET : POST;
+  const body = method === "POST" ? JSON.stringify({ device_name: "My Mac" }) : undefined;
+  const response = await handler(new Request(`http://localhost/api/recording/${path.join("/")}`, { method, body }), context(path));
+  expect(response.status).toBe(200);
+  expect(response.headers.get("Cache-Control")).toBe("private, no-store");
+  expect(fetchBackend).toHaveBeenCalledWith(`/recording/${path.join("/")}`, expect.objectContaining({ method, body, userId: "owner" }));
+});
+it.each([{ path: ["home-proxy"] }, { path: ["home-proxy", "setup"] }, { path: ["home-proxy", "disconnect"] }])("rejects non-admin home connection access: $path", async ({ path }) => {
+  const method = path.length === 1 ? "GET" : "POST";
+  const handler = method === "GET" ? GET : POST;
+  const response = await handler(new Request(`http://localhost/api/recording/${path.join("/")}`, { method }), context(path));
+  expect(response.status).toBe(403);
+  expect(fetchBackend).not.toHaveBeenCalled();
+});
+it("does not proxy installation, pairing, nested home routes, or incorrect methods", async () => {
+  vi.mocked(getServerSession).mockResolvedValue({ user: { id: "owner", is_admin: true } } as never);
+  const rejected = [
+    [GET, "GET", ["home-proxy", "setup"]], [GET, "GET", ["home-proxy", "disconnect"]],
+    [POST, "POST", ["home-proxy"]], [PUT, "PUT", ["home-proxy", "setup"]],
+    [GET, "GET", ["home-proxy", "install"]], [POST, "POST", ["home-proxy", "pair"]],
+    [POST, "POST", ["home-proxy", "setup", "extra"]], [GET, "GET", ["home-proxy", "status"]],
+  ] as const;
+  for (const [handler, method, path] of rejected) {
+    const response = await handler(new Request("http://localhost/api/recording/home-proxy", { method }), context([...path]));
+    expect(response.status).toBe(404);
+  }
+  expect(fetchBackend).not.toHaveBeenCalled();
+});
+it("keeps request size limits for home connection setup", async () => {
+  vi.mocked(getServerSession).mockResolvedValue({ user: { id: "owner", is_admin: true } } as never);
+  const response = await POST(new Request("http://localhost/api/recording/home-proxy/setup", { method: "POST", body: "x".repeat(32_769) }), context(["home-proxy", "setup"]));
+  expect(response.status).toBe(413);
+  expect(fetchBackend).not.toHaveBeenCalled();
+});

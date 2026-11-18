@@ -11,6 +11,7 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/api/announcements**", (route) => route.fulfill({ json: { announcements: [] } }));
   await page.route("**/api/social/providers", (route) => route.fulfill({ json: { enabled: true, providers: [] } }));
   await page.route("**/api/social/connections", (route) => route.fulfill({ json: { connections: [] } }));
+  await page.route("**/api/recording/home-proxy", (route) => route.fulfill({ json: { available: true, paired: false, connected: false, device_name: null, paired_at: null } }));
   await page.route("**/api/recording/channels?*", (route) => route.fulfill({ json: { channels: [channel], total: 1 } }));
   await page.route("**/api/recording/channels/*/sessions?*", (route) => route.fulfill({ json: { sessions: [], total: 0 } }));
   await page.route("**/api/recording/channels/*/windows?*", (route) => route.fulfill({ json: { windows: [], total: 0 } }));

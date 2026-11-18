@@ -169,9 +169,9 @@ async def test_probe_live_uses_json_no_config_and_youtube_live_url(monkeypatch):
     result = await capture.probe_channel("https://www.youtube.com/@demo")
     assert result.state is capture.ProbeState.LIVE
     args, kwargs = launcher.call_args
-    assert args[0] == "streamlink"
-    assert "--json" in args and "--no-config" in args
-    assert args[-1] == "https://www.youtube.com/@demo/live"
+    assert args[0] == sys.executable
+    assert args[1].endswith('youtube_probe.py')
+    assert args[2] == "https://www.youtube.com/@demo/live"
     assert kwargs["start_new_session"] is True
     assert "SECRET" not in result.detail
 

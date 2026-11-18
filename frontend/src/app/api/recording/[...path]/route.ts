@@ -7,6 +7,10 @@ const SEGMENT = /^[A-Za-z0-9_-]+$/;
 
 function allowed(method: string, path: string[]) {
   if (!path.length || !path.every((part) => SEGMENT.test(part))) return false;
+  if (path[0] === "home-proxy") {
+    return (path.length === 1 && method === "GET")
+      || (path.length === 2 && ["setup", "disconnect"].includes(path[1]) && method === "POST");
+  }
   if (path[0] === "channels") {
     if (path.length === 1) return method === "GET" || method === "POST";
     if (path.length === 2) return method === "GET" || method === "PATCH";
@@ -22,6 +26,9 @@ async function proxy(request: Request, { params }: Context) {
   if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { path } = await params;
   if (!allowed(request.method, path)) return NextResponse.json({ detail: "Not found" }, { status: 404 });
+  if (path[0] === "home-proxy" && !(session.user as { is_admin?: boolean }).is_admin) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
   const body = request.method === "GET" ? undefined : await request.text();
   if (body && body.length > 32_768) return NextResponse.json({ detail: "Recording settings are too large" }, { status: 413 });
   try {

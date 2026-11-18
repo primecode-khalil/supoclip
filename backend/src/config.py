@@ -65,7 +65,8 @@ class Config:
         )
         # Empty disables the residential-proxy yt-dlp path. Nothing in the
         # download chain changes until this template is set.
-        self.youtube_proxy_url = self._get_runtime_setting("YOUTUBE_PROXY_URL") or ""
+        from .home_proxy import active_proxy
+        self.youtube_proxy_url = active_proxy() or self._get_runtime_setting("YOUTUBE_PROXY_URL") or ""
         self.youtube_proxy_timeout_seconds = self._get_int_env("YOUTUBE_PROXY_TIMEOUT_SECONDS", 300)
         # Twitch/Kick: YOUTUBE_PROXY_TIMEOUT_SECONDS is how long a download may go
         # without receiving data. This is the shortest overall cap for one call.

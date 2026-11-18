@@ -276,7 +276,9 @@ class ChannelRunner:
                     else:
                         self.failures += 1
                         self.next_probe = time.monotonic() + retry_delay(self.failures - 1)
-                        await store_call("report_error", self.token, "Stream availability is unknown; retrying without deleting media")
+                        message = ("YouTube rejected this connection. Connect your Mac in Home connection; existing media is retained."
+                                   if result.detail == 'youtube_access_blocked' else "Stream availability is unknown; retrying without deleting media")
+                        await store_call("report_error", self.token, message)
                 await asyncio.sleep(5)
         finally:
             heartbeat.cancel()
@@ -302,6 +304,9 @@ async def run(settings: RuntimeSettings):
         pipeline = AutomationPipeline(settings.root, native, archive_remote=os.getenv("RECORDING_ARCHIVE_REMOTE", ""))
         try:
             while not stop.is_set():
+                from ..runtime_settings import load_runtime_settings_cache
+                async with AsyncSessionLocal() as db:
+                    await load_runtime_settings_cache(db)
                 channels = {channel.channel_id: channel for channel in await asyncio.wait_for(store_call("list_enabled_channels"), timeout=30)}
                 for identity, (runner, task) in list(running.items()):
                     if identity not in channels:
