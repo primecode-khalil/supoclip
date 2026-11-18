@@ -1,0 +1,12 @@
+{
+  "before": {
+    "flash_seconds": 4.0,
+    "beep_seconds": 2.0214,
+    "audio_lead_seconds": 1.9786
+  },
+  "after": {
+    "flash_seconds": 4.0,
+    "beep_seconds": 4.0001,
+    "audio_lead_seconds": -0.0001
+  }
+}
