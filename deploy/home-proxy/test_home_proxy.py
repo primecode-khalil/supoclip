@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import socket
+import shlex
 import pytest
 
 
@@ -40,6 +41,17 @@ def test_ssh_pins_identity_and_host_and_private_forward(tmp_path):
     assert '-NT' in argv
     assert 'BatchMode=yes' in argv
     assert 'Compression=no' in argv
+
+
+@pytest.mark.parametrize('folder', ['Application Support/SupoClip Home Proxy', 'Mac "personal" files', r'Mac\files'])
+def test_known_hosts_path_remains_one_openssh_filename(tmp_path, folder):
+    directory = tmp_path / folder
+    config = {'ssh_host': 'server.example.com', 'ssh_port': 2222, 'ssh_user': 'supoclip-relay', 'remote_bind': '172.19.0.1', 'remote_port': 18888}
+    argv = module().ssh_command(config, directory, 19891)
+    option = next(value for value in argv if value.startswith('UserKnownHostsFile='))
+    # OpenSSH parses this option's value as a list of filenames, even when
+    # subprocess receives the entire -o value as a single argv element.
+    assert shlex.split(option.split('=', 1)[1]) == [str(directory / 'known_hosts')]
 
 
 @pytest.mark.parametrize('field,value',[('remote_bind','0.0.0.0'),('ssh_host','-oProxyCommand=bad'),('ssh_port',0),('ssh_user','root'),('remote_port',22)])

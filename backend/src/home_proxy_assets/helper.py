@@ -102,10 +102,13 @@ def ssh_command(config, directory, port):
     for value in (config['remote_port'], port):
         if type(value) is not int or not 1024 <= value <= 65535:
             raise ValueError('Invalid tunnel port')
+    # OpenSSH parses -o values again as ssh_config syntax. Without these
+    # quotes, macOS's "Application Support" becomes several known-hosts files.
+    known_hosts = str(directory / 'known_hosts').replace('\\', '\\\\').replace('"', '\\"')
     return [
         '/usr/bin/ssh', '-F', '/dev/null', '-NT', '-i', str(directory / 'id_ed25519'),
         '-o', 'IdentitiesOnly=yes', '-o', 'IdentityAgent=none', '-o', 'BatchMode=yes',
-        '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile=' + str(directory / 'known_hosts'),
+        '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile="' + known_hosts + '"',
         '-o', 'ExitOnForwardFailure=yes', '-o', 'ConnectTimeout=15',
         '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3', '-o', 'Compression=no',
         '-R', f'{bind}:{config["remote_port"]}:127.0.0.1:{port}',
