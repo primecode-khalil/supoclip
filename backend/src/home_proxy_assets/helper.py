@@ -121,6 +121,27 @@ def known_hosts_entry(config):
     return host + ' ' + ' '.join(config['ssh_host_key'].split()[:2]) + '\n'
 
 
+def restart_login_service(plist):
+    """Wait for asynchronous launchd removal before loading a replacement."""
+    label = 'io.supoclip.home-proxy'
+    domain = f'gui/{os.getuid()}'
+    service = domain + '/' + label
+    subprocess.run(['/bin/launchctl', 'bootout', service],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for _ in range(150):
+        state = subprocess.run(['/bin/launchctl', 'print', service],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if state.returncode != 0:
+            break
+        time.sleep(0.1)
+    else:
+        raise RuntimeError('The previous home connection is still stopping. Try setup again.')
+    subprocess.run(['/bin/launchctl', 'bootstrap', domain, str(plist)], check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    subprocess.run(['/bin/launchctl', 'kickstart', service], check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=Path)

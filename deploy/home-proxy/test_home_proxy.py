@@ -2,6 +2,7 @@ import importlib.util
 from pathlib import Path
 import socket
 import shlex
+from types import SimpleNamespace
 import pytest
 
 
@@ -52,6 +53,32 @@ def test_known_hosts_path_remains_one_openssh_filename(tmp_path, folder):
     # OpenSSH parses this option's value as a list of filenames, even when
     # subprocess receives the entire -o value as a single argv element.
     assert shlex.split(option.split('=', 1)[1]) == [str(directory / 'known_hosts')]
+
+
+def test_reinstall_waits_until_launchd_finishes_removing_old_service(monkeypatch, tmp_path):
+    m = module()
+    states = iter([0, 0, 113])
+    calls = []
+    def run(argv, **kwargs):
+        calls.append(argv[1])
+        return SimpleNamespace(returncode=next(states) if argv[1] == 'print' else 0)
+    monkeypatch.setattr(m.subprocess, 'run', run)
+    monkeypatch.setattr(m.time, 'sleep', lambda _: None)
+    m.restart_login_service(tmp_path / 'agent.plist')
+    assert calls == ['bootout', 'print', 'print', 'print', 'bootstrap', 'kickstart']
+
+
+def test_reinstall_reports_a_stuck_launchd_removal_without_bootstrapping(monkeypatch, tmp_path):
+    m = module()
+    calls = []
+    def run(argv, **kwargs):
+        calls.append(argv[1])
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(m.subprocess, 'run', run)
+    monkeypatch.setattr(m.time, 'sleep', lambda _: None)
+    with pytest.raises(RuntimeError, match='still stopping'):
+        m.restart_login_service(tmp_path / 'agent.plist')
+    assert 'bootstrap' not in calls and 'kickstart' not in calls
 
 
 @pytest.mark.parametrize('field,value',[('remote_bind','0.0.0.0'),('ssh_host','-oProxyCommand=bad'),('ssh_port',0),('ssh_user','root'),('remote_port',22)])

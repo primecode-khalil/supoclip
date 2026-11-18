@@ -69,15 +69,15 @@ with tempfile.TemporaryDirectory(dir=root,prefix='pair.') as tmp:
     (root/'known_hosts').write_text(module['known_hosts_entry'](config))
     (root/'config.json').write_text(json.dumps(config))
 label='io.supoclip.home-proxy'
-domain=f'gui/{os.getuid()}'
 agents=Path.home()/'Library/LaunchAgents';agents.mkdir(parents=True,exist_ok=True)
 plist=agents/(label+'.plist')
 plist.write_bytes(plistlib.dumps({'Label':label,'ProgramArguments':[sys.executable,str(root/'helper.py'),'--config',str(root/'config.json')],
     'RunAtLoad':True,'KeepAlive':True,'ThrottleInterval':15,
     'StandardOutPath':str(root/'connection.log'),'StandardErrorPath':str(root/'connection.log')}))
-subprocess.run(['/bin/launchctl','bootout',domain+'/'+label],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-subprocess.run(['/bin/launchctl','bootstrap',domain,str(plist)],check=True)
-subprocess.run(['/bin/launchctl','kickstart',domain+'/'+label],check=True)
+try:
+    module['restart_login_service'](plist)
+except (subprocess.CalledProcessError,RuntimeError):
+    raise SystemExit('Could not start Home connection. Copy a fresh setup command and try again.') from None
 uninstall=root/'uninstall.command'
 uninstall.write_text('#!/bin/bash\n/bin/launchctl bootout gui/$(id -u)/io.supoclip.home-proxy 2>/dev/null || true\n'
     '/bin/rm -f "$HOME/Library/LaunchAgents/io.supoclip.home-proxy.plist"\n'
