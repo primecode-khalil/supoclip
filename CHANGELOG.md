@@ -6,6 +6,7 @@ Add a line here when a pull request changes something a user can see. Use **New*
 
 ## 2026-11-18
 
+- **Fixed:** YouTube live recording preserves the shared audio/video clock when merging separate streams, preventing early audio in generated clips and keeping caption timing aligned. Previously captured media needs a corrected source before regeneration. ([#1](https://github.com/primecode-khalil/supoclip/pull/1))
 - **New:** Pair your Mac from Live channels with one setup command to use its home connection for YouTube imports and live recording. The private helper reconnects automatically, starts at login, and can be disconnected from the dashboard without a VPN or router changes. Keep the Mac awake and online during capture. ([#1](https://github.com/primecode-khalil/supoclip/pull/1))
 - **Fixed:** YouTube live recording now uses the same downloader for discovery and video/audio capture, with the pinned November playback fix and clear messages when YouTube rejects the connection. ([#1](https://github.com/primecode-khalil/supoclip/pull/1))
 

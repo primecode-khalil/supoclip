@@ -85,6 +85,9 @@ def youtube_command(url: str, quality: str) -> list[str]:
     command = [sys.executable, '-m', 'yt_dlp', '--ignore-config', '--no-playlist',
                '--quiet', '--no-warnings', '--no-progress', '--no-cache-dir',
                '--socket-timeout', '20', '--retries', '1', '--fragment-retries', '1',
+               # Separate live playlists can start on different fragments. Keep
+               # their common broadcast clock when yt-dlp merges them to stdout.
+               '--downloader-args', 'ffmpeg:-copyts',
                '-f', f'bv[height<={height}]+ba/b[height<={height}]']
     proxy = youtube_proxy()
     if proxy:
@@ -266,6 +269,11 @@ class CaptureProcess:
         self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         if any(self.directory.iterdir()):
             raise ValueError("A new capture attempt requires an empty directory")
+        youtube = urlsplit(self.url).hostname == 'www.youtube.com'
+        # Preserve video packets. Pad any initial audio gap on the same clock
+        # so transcription timestamps still use the video's zero origin.
+        codecs = (['-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k',
+                   '-af', 'aresample=async=1:first_pts=0', '-shortest'] if youtube else ['-c', 'copy'])
         read_descriptor, write_descriptor = os.pipe()
         try:
             # Parent copies close before cleanup runs, including partial-start
@@ -274,7 +282,7 @@ class CaptureProcess:
                 self._ffmpeg = await asyncio.create_subprocess_exec(
                     "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
                     "-fflags", "+genpts", "-i", "pipe:0", "-map", "0:v:0",
-                    "-map", "0:a:0?", "-c", "copy", "-f", "segment",
+                    "-map", "0:a:0?", *codecs, "-f", "segment",
                     "-segment_format", "matroska", "-segment_time", str(self.segment_seconds),
                     "-segment_list", "segments.csv", "-segment_list_type", "csv",
                     "-segment_list_size", "0", "-reset_timestamps", "1",
@@ -283,7 +291,7 @@ class CaptureProcess:
                     stderr=asyncio.subprocess.DEVNULL, cwd=self.directory, start_new_session=True, env=capture_environment(),
                 )
                 self._streamlink = await asyncio.create_subprocess_exec(
-                    *(youtube_command(self.url, self.quality) if urlsplit(self.url).hostname == 'www.youtube.com'
+                    *(youtube_command(self.url, self.quality) if youtube
                       else [*streamlink_command(), '--stdout', self.url, self.quality]),
                     stdin=asyncio.subprocess.DEVNULL, stdout=output_pipe,
                     stderr=asyncio.subprocess.DEVNULL, start_new_session=True, env=capture_environment(),
