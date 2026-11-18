@@ -244,7 +244,7 @@ class ChannelRunner:
                 if self.capture and (not self.capture.running or self.capture.stalled or not available):
                     await self._stop_capture()
                     self.failures += 1
-                    self.next_probe = time.monotonic() + retry_delay(self.failures - 1)
+                    self.next_probe = time.monotonic() + min(60, retry_delay(self.failures - 1))
                 if not available:
                     await store_call("report_error", self.token, "Capture paused: disk reserve or pending-work limit reached; existing media retained")
                 elif self.capture is None and time.monotonic() >= self.next_probe:
@@ -275,7 +275,9 @@ class ChannelRunner:
                                 await store_call("finish_session", self.token, active, "completed")
                     else:
                         self.failures += 1
-                        self.next_probe = time.monotonic() + retry_delay(self.failures - 1)
+                        # A reconnected Mac must resume live monitoring promptly.
+                        # The longer upload/publishing retry policy is separate.
+                        self.next_probe = time.monotonic() + min(60, retry_delay(self.failures - 1))
                         message = ("YouTube rejected this connection. Connect your Mac in Home connection; existing media is retained."
                                    if result.detail == 'youtube_access_blocked' else "Stream availability is unknown; retrying without deleting media")
                         await store_call("report_error", self.token, message)

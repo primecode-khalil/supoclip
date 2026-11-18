@@ -12,7 +12,7 @@ import pytest
 
 from src.recording.automation_schema import AutomationPolicy
 from src.recording.automation_store import Lease
-from src.recording.capture import ClosedSegment
+from src.recording.capture import ClosedSegment, ProbeResult, ProbeState
 from src.workers import recording_supervisor as supervisor
 
 
@@ -91,6 +91,51 @@ async def cancel_and_reap(task):
     if not task.done():
         task.cancel()
     await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize('failure', ['probe', 'capture'])
+async def test_capture_retries_within_one_minute_after_many_connection_failures(tmp_path, monkeypatch, failure):
+    runner, capture = runner_with_capture(tmp_path, WaitingPipeline())
+    runner.failures = 8  # A long outage must not leave a reconnected Mac waiting an hour.
+    if failure == 'probe':
+        runner.capture = None
+    else:
+        capture.stalled = True
+    observed = asyncio.Event()
+    blocked = asyncio.Event()
+    real_sleep = asyncio.sleep
+
+    async def background():
+        await blocked.wait()
+
+    async def backlog():
+        return 0
+
+    async def probe(*args, **kwargs):
+        return ProbeResult(ProbeState.UNKNOWN, 'probe_unavailable')
+
+    async def sleep(seconds):
+        if seconds == 5:
+            observed.set()
+            await blocked.wait()
+        else:
+            await real_sleep(seconds)
+
+    async def store(method, *args, **kwargs):
+        assert method in {'report_error', 'finish_session', 'release'}
+
+    monkeypatch.setattr(runner, '_background_work', background)
+    monkeypatch.setattr(runner, '_backlog', backlog)
+    monkeypatch.setattr(supervisor, 'probe_channel', probe)
+    monkeypatch.setattr(supervisor, 'store_call', store)
+    monkeypatch.setattr(supervisor.shutil, 'disk_usage', lambda _: SimpleNamespace(free=10_000_000))
+    monkeypatch.setattr(supervisor.asyncio, 'sleep', sleep)
+    task = asyncio.create_task(runner.run())
+    try:
+        await asyncio.wait_for(observed.wait(), timeout=1)
+        assert 0 < runner.next_probe - supervisor.time.monotonic() <= 60
+    finally:
+        await cancel_and_reap(task)
 
 
 async def test_disk_guard_stops_capture_while_pipeline_is_still_waiting(tmp_path, monkeypatch, existing_sequences):
