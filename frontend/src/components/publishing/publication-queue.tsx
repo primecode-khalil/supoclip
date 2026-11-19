@@ -8,7 +8,7 @@ import { publicationTime, publishingJSON } from "./api";
 
 export function publicationLabel(post: SocialPost) {
   if (post.stage === "deleted") return "Deleted from YouTube";
-  if ((post.provider_options?.delete_remote || post.stage === "deleting" || (post.provider_options?.native_schedule && post.clip_id === null && !["published","cancelled"].includes(post.status))) && post.status !== "cancelled") return "Deletion pending · YouTube copy may still be live";
+  if ((post.provider_options?.delete_remote || post.stage === "deleting" || (post.provider_options?.native_schedule && post.clip_id === null && !post.provider_options.source_replaced && !["published","cancelled"].includes(post.status))) && post.status !== "cancelled") return "Deletion pending · YouTube copy may still be live";
   if (post.status === "cancelled") return "Cancelled · kept private";
   if (post.provider_options?.cancel_requested && post.status !== "published") return "Cancellation pending · check YouTube until confirmed";
   if (post.status === "failed") return "Needs attention";

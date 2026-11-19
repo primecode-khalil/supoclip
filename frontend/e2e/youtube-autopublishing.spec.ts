@@ -99,6 +99,7 @@ for (const width of [1440,320]) {
     await page.route("**/api/social/deletion-impact",route => route.fulfill({json:{affected:[{id:"demo-post",title:"A scheduled Short",destination:"Demo Creator"}],published_retained:1}}));
     await page.route("**/api/tasks/demo-source?*",route => {
       expect(route.request().method()).toBe("DELETE");
+      expect(route.request().postDataJSON().delete_social_post_ids).toEqual(["demo-post"]);
       expect(new URL(route.request().url()).searchParams.get("confirm_social_delete")).toBe("true");
       removed=true;return route.fulfill({json:{message:"Deleted source; linked removal requested"}});
     });

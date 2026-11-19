@@ -285,26 +285,28 @@ class ClipRepository:
         return result.scalar()
 
     @staticmethod
-    async def delete_clips_by_task(db: AsyncSession, task_id: str) -> int:
+    async def delete_clips_by_task(db: AsyncSession, task_id: str, *, preserve_native=True, acknowledged_post_ids=None) -> int:
         """Delete all clips for a task. Returns count of deleted clips."""
         rows = await db.execute(sa_text(
             "SELECT id, task_id, filename, file_path FROM generated_clips WHERE task_id = :task_id"
         ), {"task_id": task_id})
-        for clip in rows.mappings():
+        clips = list(rows.mappings())
+        for clip in clips:
             await queue_clip_delete(db, clip)
         await ClipExportRepository.queue_file_deletes(db, task_id=task_id)
-        await SocialRepository.cancel_unpublished_for_clips(db, task_id=task_id)
+        await SocialRepository.cancel_unpublished_for_clips(db, task_id=task_id,preserve_native=preserve_native,acknowledged_post_ids=acknowledged_post_ids)
         result = await db.execute(
             sa_text("DELETE FROM generated_clips WHERE task_id = :task_id"),
             {"task_id": task_id},
         )
+        await SocialRepository.finish_clip_removal(db,[clip["id"] for clip in clips],preserve_native=preserve_native,acknowledged_post_ids=acknowledged_post_ids)
         await commit_unless_editing(db)
         deleted_count = result.rowcount
         logger.info(f"Deleted {deleted_count} clips for task {task_id}")
         return deleted_count
 
     @staticmethod
-    async def delete_clip(db: AsyncSession, clip_id: str) -> None:
+    async def delete_clip(db: AsyncSession, clip_id: str, *, preserve_native=True, acknowledged_post_ids=None) -> None:
         """Delete a single clip by ID."""
         rows = await db.execute(sa_text(
             "SELECT id, task_id, filename, file_path FROM generated_clips WHERE id = :clip_id"
@@ -313,11 +315,12 @@ class ClipRepository:
         if clip:
             await queue_clip_delete(db, clip)
             await ClipExportRepository.queue_file_deletes(db, clip_id=clip_id)
-            await SocialRepository.cancel_unpublished_for_clips(db, clip_id=clip_id)
+            await SocialRepository.cancel_unpublished_for_clips(db, clip_id=clip_id,preserve_native=preserve_native,acknowledged_post_ids=acknowledged_post_ids)
         await db.execute(
             sa_text("DELETE FROM generated_clips WHERE id = :clip_id"),
             {"clip_id": clip_id},
         )
+        await SocialRepository.finish_clip_removal(db,[clip_id],preserve_native=preserve_native,acknowledged_post_ids=acknowledged_post_ids)
         await commit_unless_editing(db)
         logger.info(f"Deleted clip {clip_id}")
 

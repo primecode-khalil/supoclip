@@ -96,12 +96,15 @@ class YouTubeUploadRepository:
     @staticmethod
     async def native_finish(db, post_id, token, account_id, *, stage, status, visibility, publish_at=None, next_at=None):
         """Fence the checkpoint and publish truthful state together, honoring late cancellation."""
-        post = (await db.execute(text("SELECT user_id,provider_options,clip_id FROM social_posts WHERE id=:id FOR UPDATE"), {"id": post_id})).mappings().first()
+        post = (await db.execute(text("SELECT user_id,provider_options,clip_id,task_id,(SELECT video_id FROM youtube_uploads WHERE post_id=social_posts.id) AS video_id FROM social_posts WHERE id=:id FOR UPDATE"), {"id": post_id})).mappings().first()
         if not post:
             await db.rollback()
             return False
-        cancelling = post["provider_options"].get("cancel_requested") or post["clip_id"] is None
-        if cancelling and status == "scheduled":
+        from ..services.youtube_native_schedule import deleting_source
+        if deleting_source(post) and stage != "deleted" and post["video_id"]:
+            stage,status,next_at="deleting","publishing",datetime.now(timezone.utc)
+        cancelling = post["provider_options"].get("cancel_requested") or deleting_source(post)
+        if cancelling and status == "scheduled" and not deleting_source(post):
             stage, status, next_at = "cancelling", "publishing", datetime.now(timezone.utc)
         review_id = post["provider_options"].get("review", {}).get("id")
         if publish_at and review_id:

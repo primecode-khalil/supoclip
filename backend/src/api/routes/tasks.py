@@ -2,7 +2,7 @@
 Task API routes using refactored architecture.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from starlette.background import BackgroundTask
@@ -38,7 +38,7 @@ from ...repositories.task_idempotency_repository import (
 from ...database import get_db
 from ...database import AsyncSessionLocal
 from ...services.task_service import TaskService
-from ...services.social_source_deletion import require_social_deletion_ack
+from ...services.social_source_deletion import require_social_deletion_ack, SourceDeletionConfirmation
 from ...services.video_service import VideoService
 from ...media.upload_ingest import foreign_upload
 from ...repositories.upload_repository import get_stored_upload
@@ -1207,7 +1207,7 @@ async def update_task(
 
 @router.delete("/{task_id}")
 async def delete_task(
-    task_id: str, request: Request, db: AsyncSession = Depends(get_db), confirm_social_delete: bool = False
+    task_id: str, request: Request, db: AsyncSession = Depends(get_db), confirm_social_delete: bool = False, body: SourceDeletionConfirmation | None = Body(default=None)
 ):
     """Delete a task and all its associated clips."""
     try:
@@ -1224,9 +1224,9 @@ async def delete_task(
                 status_code=403, detail="Not authorized to delete this task"
             )
 
-        await require_social_deletion_ack(db,user_id,task_id,confirmed=confirm_social_delete)
+        selected = await require_social_deletion_ack(db,user_id,task_id,confirmed=confirm_social_delete,selected_post_ids=body.delete_social_post_ids if body else None)
         # Delete clips and task
-        await task_service.delete_task(task_id)
+        await task_service.delete_task(task_id,social_post_ids=selected)
 
         return {"message": "Task deleted successfully"}
 
@@ -1241,7 +1241,7 @@ async def delete_task(
 
 @router.delete("/{task_id}/clips/{clip_id}")
 async def delete_clip(
-    task_id: str, clip_id: str, request: Request, db: AsyncSession = Depends(get_db), confirm_social_delete: bool = False
+    task_id: str, clip_id: str, request: Request, db: AsyncSession = Depends(get_db), confirm_social_delete: bool = False, body: SourceDeletionConfirmation | None = Body(default=None)
 ):
     """Delete a specific clip."""
     try:
@@ -1262,8 +1262,8 @@ async def delete_clip(
         if not clip or clip["task_id"] != task_id:
             raise HTTPException(status_code=404, detail="Clip not found")
 
-        await require_social_deletion_ack(db,user_id,task_id,clip_id=clip_id,confirmed=confirm_social_delete)
-        await task_service.delete_clip(task_id, clip_id)
+        selected = await require_social_deletion_ack(db,user_id,task_id,clip_id=clip_id,confirmed=confirm_social_delete,selected_post_ids=body.delete_social_post_ids if body else None)
+        await task_service.delete_clip(task_id, clip_id,social_post_ids=selected)
 
         return {"message": "Clip deleted successfully"}
 

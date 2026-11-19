@@ -169,3 +169,77 @@ async def test_unstarted_orphan_can_finish_without_a_destination_connection(dele
     await delete_source(client,auth_headers,post)
     result = await service.publish_post(post["id"])
     assert result["status"] == "cancelled" and not http.calls
+
+async def test_acknowledged_copy_stays_selected_if_it_publishes_before_delete_click(deletion, db_session, client, auth_headers):
+    service, post, http, _ = deletion
+    await scheduled(deletion,db_session)
+    await db_session.execute(text("UPDATE social_posts SET status='published' WHERE id=:id"), {"id":post["id"]})
+    await db_session.commit()
+    http.resource["status"] = {"privacyStatus":"public","uploadStatus":"processed"}
+    response = await client.request("DELETE",f"/tasks/{post['task_id']}?confirm_social_delete=true",headers=auth_headers,
+        json={"delete_social_post_ids":[post["id"]]})
+    assert response.status_code == 200
+    result = await service.get_post("user-1",post["id"])
+    assert result["status"] == "publishing" and result["provider_options"]["delete_remote"] is True
+    await service.publish_post(post["id"])
+    assert (await service.get_post("user-1",post["id"]))["stage"] == "deleted" and http.resource == {}
+
+
+async def test_late_publication_ack_cannot_overwrite_a_committed_source_delete_request(deletion, db_session, client, auth_headers):
+    from src.repositories.youtube_upload_repository import YouTubeUploadRepository as Uploads
+    service, post, http, _ = deletion
+    await scheduled(deletion,db_session)
+    await due(db_session,post["id"])
+    lease = await Uploads.claim(db_session,post["id"])
+    assert lease
+    await delete_source(client,auth_headers,post)
+    # A worker whose GET completed before source deletion now acknowledges public status.
+    await Uploads.native_finish(db_session,post["id"],lease["lease_token"],post["social_account_id"],stage="ready",status="published",visibility="public")
+    result = await service.get_post("user-1",post["id"])
+    assert result["status"] == "publishing" and result["stage"] == "deleting"
+    http.resource["status"] = {"privacyStatus":"public","uploadStatus":"processed"}
+    await due(db_session,post["id"])
+    await service.publish_post(post["id"])
+    assert (await service.get_post("user-1",post["id"]))["stage"] == "deleted" and http.resource == {}
+
+async def test_edit_replacement_preserves_approved_copy_until_its_generation_is_deleted(deletion, db_session, client, auth_headers):
+    from src.repositories.clip_repository import ClipRepository
+    service, post, http, _ = deletion
+    await scheduled(deletion,db_session)
+    await ClipRepository.delete_clip(db_session,post["clip_id"],preserve_native=True)
+    await due(db_session,post["id"])
+    await service.publish_post(post["id"])
+    result = await service.get_post("user-1",post["id"])
+    assert result["status"] == "scheduled" and http.resource and not any(m=="DELETE" for m,_,_ in http.calls)
+    assert (await delete_source(client,auth_headers,post)).status_code == 200
+    await service.publish_post(post["id"])
+    assert (await service.get_post("user-1",post["id"]))["stage"] == "deleted" and http.resource == {}
+
+async def test_new_uploads_require_a_refreshed_deletion_selection(deletion, db_session, client, auth_headers):
+    service, post, http, path = deletion
+    await scheduled(deletion,db_session)
+    response = await client.request("DELETE",f"/tasks/{post['task_id']}?confirm_social_delete=true",headers=auth_headers,json={"delete_social_post_ids":[]})
+    assert response.status_code == 409 and path.exists()
+    assert (await service.get_post("user-1",post["id"]))["status"] == "scheduled"
+
+
+async def test_private_copy_receipt_cannot_be_cleared_before_source_removal(deletion, db_session, client, auth_headers):
+    service, post, http, _ = deletion
+    await scheduled(deletion,db_session)
+    await service.cancel_post("user-1",post["id"])
+    await service.publish_post(post["id"])
+    response = await client.delete(f"/social/posts/{post['id']}",headers=auth_headers)
+    assert response.status_code == 400
+    assert (await service.get_post("user-1",post["id"]))["external_post_id"] == "video-1" and http.resource
+
+
+async def test_account_deletion_keeps_receipts_for_an_already_disconnected_private_copy(deletion, db_session, client, auth_headers):
+    service, post, http, _ = deletion
+    await scheduled(deletion,db_session)
+    http.routes[("POST","oauth2.googleapis.com/revoke")] = FakeResponse(200,{})
+    await service.cancel_post("user-1",post["id"])
+    await service.publish_post(post["id"])
+    assert (await client.delete(f"/social/connections/{post['social_account_id']}",headers=auth_headers)).status_code == 200
+    response = await client.delete("/social/connections",headers=auth_headers)
+    assert response.status_code == 409
+    assert (await service.get_post("user-1",post["id"]))["provider_options"]["delete_remote"] is True

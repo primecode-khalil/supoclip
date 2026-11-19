@@ -646,7 +646,9 @@ class SocialRepository:
                 DELETE FROM social_posts
                 WHERE id = :id AND user_id = :user_id
                   AND status NOT IN ('queued', 'publishing')
-                  AND NOT (provider_options @> '{"native_schedule": true}' AND status NOT IN ('published','cancelled'))
+                  AND NOT (provider_options @> '{"native_schedule": true}' AND (status NOT IN ('published','cancelled') OR
+                    (status='cancelled' AND external_post_id IS NOT NULL AND NOT EXISTS (
+                      SELECT 1 FROM youtube_uploads u WHERE u.post_id=social_posts.id AND u.stage='deleted'))))
                 RETURNING id
                 """
             ),
@@ -703,7 +705,8 @@ class SocialRepository:
 
     @staticmethod
     async def cancel_unpublished_for_clips(
-        db: AsyncSession, *, clip_id: Optional[str] = None, task_id: Optional[str] = None
+        db: AsyncSession, *, clip_id: Optional[str] = None, task_id: Optional[str] = None,
+        preserve_native: bool = False, acknowledged_post_ids: list[str] | None = None
     ) -> None:
         """
         Cancel scheduled/queued posts of clips about to be deleted.
@@ -715,24 +718,30 @@ class SocialRepository:
         if clip_id:
             clause, params = "clip_id = :clip_id", {"clip_id": clip_id}
         elif task_id:
-            clause = "clip_id IN (SELECT id FROM generated_clips WHERE task_id = :task_id)"
+            clause = "task_id = :task_id"
             params = {"task_id": task_id}
         else:
             return
+        params["selected"] = list(acknowledged_post_ids or [])
         try:
             async with db.begin_nested():
-                await db.execute(text(f"""
-                    UPDATE social_posts SET provider_options=provider_options || '{{"cancel_requested": true, "delete_remote": true}}'::jsonb,
-                        status='publishing',pending_handle='youtube:' || id,updated_at=NOW()
-                    WHERE {clause} AND provider_options @> '{{"native_schedule": true}}'
-                      AND status<>'published' AND (status<>'cancelled' OR EXISTS (
-                        SELECT 1 FROM youtube_uploads u WHERE u.post_id=social_posts.id AND u.video_id IS NOT NULL AND u.stage<>'deleted'))
-                """), params)
-                await db.execute(text(f"""
-                    UPDATE youtube_uploads SET next_attempt_at=NOW(),
-                      stage=CASE WHEN lease_expires_at IS NULL OR lease_expires_at<NOW() THEN 'deleting' ELSE stage END
-                    WHERE post_id IN (SELECT id FROM social_posts WHERE {clause} AND provider_options @> '{{"native_schedule": true,"delete_remote": true}}')
-                """), params)
+                await db.execute(text(f"UPDATE social_review_items SET status='cancelled',decided_at=NOW() WHERE {clause} AND status='pending'"),params)
+                if preserve_native:
+                    await db.execute(text(f"""UPDATE social_posts SET provider_options=provider_options || '{{"source_replaced": true}}'::jsonb
+                        WHERE {clause} AND provider_options @> '{{"native_schedule": true}}'"""),params)
+                else:
+                    await db.execute(text(f"""
+                        UPDATE social_posts SET provider_options=provider_options || '{{"cancel_requested": true, "delete_remote": true}}'::jsonb,
+                            status='publishing',pending_handle='youtube:' || id,updated_at=NOW()
+                        WHERE {clause} AND provider_options @> '{{"native_schedule": true}}'
+                          AND (status<>'published' OR id=ANY(CAST(:selected AS VARCHAR[]))) AND (status<>'cancelled' OR EXISTS (
+                            SELECT 1 FROM youtube_uploads u WHERE u.post_id=social_posts.id AND u.video_id IS NOT NULL AND u.stage<>'deleted'))
+                    """), params)
+                    await db.execute(text(f"""
+                        UPDATE youtube_uploads SET next_attempt_at=NOW(),
+                          stage=CASE WHEN lease_expires_at IS NULL OR lease_expires_at<NOW() THEN 'deleting' ELSE stage END
+                        WHERE post_id IN (SELECT id FROM social_posts WHERE {clause} AND provider_options @> '{{"native_schedule": true,"delete_remote": true}}')
+                    """), params)
                 await db.execute(
                     text(
                         f"""
@@ -1261,8 +1270,27 @@ class SocialRepository:
             "published_retained":sum(r["status"]=='published' for r in rows)}
 
     @staticmethod
+    async def finish_clip_removal(db, clip_ids, *, preserve_native, acknowledged_post_ids=None):
+        """Cover approvals that committed while FK deletion waited for their clip lock."""
+        if not clip_ids:
+            return
+        params={"clips":clip_ids,"selected":list(acknowledged_post_ids or [])}
+        origin="provider_options->'review'->>'origin_clip_id'=ANY(CAST(:clips AS VARCHAR[]))"
+        if preserve_native:
+            await db.execute(text(f"""UPDATE social_posts SET provider_options=provider_options || '{{"source_replaced": true}}'::jsonb
+              WHERE provider_options @> '{{"native_schedule": true}}' AND {origin}"""),params)
+        else:
+            await db.execute(text(f"""UPDATE social_posts SET provider_options=provider_options || '{{"delete_remote": true,"cancel_requested": true}}'::jsonb,
+              status='publishing',pending_handle='youtube:' || id,updated_at=NOW()
+              WHERE provider_options @> '{{"native_schedule": true}}' AND {origin}
+                AND (status NOT IN ('published','cancelled') OR id=ANY(CAST(:selected AS VARCHAR[])))"""),params)
+            await db.execute(text(f"""UPDATE youtube_uploads SET next_attempt_at=NOW(),
+              stage=CASE WHEN lease_expires_at IS NULL OR lease_expires_at<NOW() THEN 'deleting' ELSE stage END
+              WHERE post_id IN (SELECT id FROM social_posts WHERE {origin} AND provider_options @> '{{"delete_remote": true}}')"""),params)
+
+    @staticmethod
     async def native_for_disconnect(db, user_id, account_id, *, include_private_copies=False):
-        account = (await db.execute(text("SELECT id FROM social_accounts WHERE id=:id AND user_id=:user AND revoked_at IS NULL FOR UPDATE"), {"id":account_id,"user":user_id})).scalar_one_or_none()
+        account = (await db.execute(text("SELECT id FROM social_accounts WHERE id=:id AND user_id=:user AND (revoked_at IS NULL OR CAST(:copies AS BOOLEAN)) FOR UPDATE"), {"id":account_id,"user":user_id,"copies":include_private_copies})).scalar_one_or_none()
         if not account:
             return []
         ids = list((await db.execute(text("""

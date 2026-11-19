@@ -14,11 +14,11 @@ def native(post):
 
 
 def withdrawing(post):
-    return bool(post.get("provider_options", {}).get("cancel_requested") or post.get("clip_id") is None)
+    return bool(post.get("provider_options", {}).get("cancel_requested") or deleting_source(post))
 
 
 def deleting_source(post):
-    return native(post) and bool(post.get("provider_options",{}).get("delete_remote") or post.get("clip_id") is None)
+    return native(post) and bool(post.get("provider_options",{}).get("delete_remote") or post.get("task_id") is None or (post.get("clip_id") is None and not post.get("provider_options",{}).get("source_replaced")))
 
 
 def parse_time(value):

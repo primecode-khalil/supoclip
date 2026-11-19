@@ -72,7 +72,9 @@ approvals per channel. Review never enables it implicitly.
 Pause intake and uploads independently in Posting pattern. Recording continues.
 Already confirmed YouTube schedules keep publishing until explicitly cancelled.
 An approved render is frozen: editing the library clip does not replace the
-reviewed bytes. This feature requires no additional LLM call.
+reviewed bytes. Editing or regenerating keeps that approval and its saved render;
+deleting the generation still removes its linked pending uploads. Failed approved
+uploads keep their render for retry. This feature requires no additional LLM call.
 
 **Cancel schedule** is a durable request. The app removes `publishAt` and checks
 Google before showing Cancelled. A connection failure leaves cancellation visibly
@@ -86,7 +88,8 @@ The source is the app's truth: deletion stops unstarted jobs and permanently
 removes linked scheduled/private YouTube copies. Track Deletion pending and
 Deleted from YouTube in Publishing. Google must confirm absence; IDs/history
 receipts remain for recovery. A selected upload that goes public while removal
-is in progress is still removed. Already-published history shown separately in
+the warning is open or removal is in progress is still removed. Newly linked
+uploads require a refreshed warning before deletion. Already-published history shown separately in
 the warning stays on YouTube.
 
 Disconnecting a channel withdraws schedules and keeps private copies; credentials

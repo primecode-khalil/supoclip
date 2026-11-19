@@ -5,9 +5,11 @@ afterEach(() => vi.unstubAllGlobals());
 it("requires a specific acknowledgement after showing linked YouTube uploads", async () => {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ affected:[{id:"post",title:"A scheduled Short",destination:"Demo channel",external_post_id:"video"}],published_retained:1 })));
   const ready = vi.fn();
-  render(<SourceDeletionWarning taskIds={["source"]} onReady={ready} />);
+  const selected = vi.fn();
+  render(<SourceDeletionWarning taskIds={["source"]} onReady={ready} onAffected={selected} />);
   expect(await screen.findByText(/A scheduled Short/)).toBeVisible();
   expect(screen.getByText(/permanently removed from YouTube/i)).toBeVisible();
+  expect(selected).toHaveBeenLastCalledWith(["post"]);
   expect(ready).toHaveBeenLastCalledWith(false);
   fireEvent.click(screen.getByLabelText("Delete the linked YouTube uploads too"));
   expect(ready).toHaveBeenLastCalledWith(true);

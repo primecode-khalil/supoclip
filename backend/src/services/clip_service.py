@@ -159,11 +159,11 @@ def _narrow_planned_meta(meta: Dict[str, Any], pieces: list, offsets: list) -> O
 
 class ClipEditingMixin:
     @serialized_task_edit
-    async def delete_clip(self, task_id: str, clip_id: str) -> None:
+    async def delete_clip(self, task_id: str, clip_id: str, *, social_post_ids: list[str] | None = None) -> None:
         clip = await self.clip_repo.get_clip_by_id(self.db, clip_id)
         if not clip or clip["task_id"] != task_id:
             raise ValueError("Clip not found")
-        await self.clip_repo.delete_clip(self.db, clip_id)
+        await self.clip_repo.delete_clip(self.db, clip_id,preserve_native=False,acknowledged_post_ids=social_post_ids)
         await self.clip_repo.reorder_task_clips(self.db, task_id)
 
     @serialized_task_edit

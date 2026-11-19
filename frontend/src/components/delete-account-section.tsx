@@ -98,7 +98,7 @@ export function DeleteAccountSection({ email, hasAppStoreSubscription = false }:
           <DialogTrigger asChild>
             <Button type="button" variant="destructive">{t("deleteAccount.action")}</Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="max-h-[90dvh] overflow-y-auto">
             <form onSubmit={handleDelete} className="space-y-4">
               <DialogHeader>
                 <DialogTitle>{t("deleteAccount.dialogTitle")}</DialogTitle>

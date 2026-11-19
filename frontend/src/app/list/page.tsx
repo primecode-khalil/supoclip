@@ -74,6 +74,7 @@ export default function ListPage() {
   const [activeBatchAction, setActiveBatchAction] = useState<BatchAction>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [socialDeleteReady, setSocialDeleteReady] = useState(false);
+  const [socialDeletePostIds, setSocialDeletePostIds] = useState<string[]>([]);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "ready" | "active" | "attention">("all");
   const [sort, setSort] = useState<LibrarySort>("newest");
@@ -290,7 +291,7 @@ export default function ListPage() {
       "delete",
       targetTaskIds,
       async (taskId) => {
-        const response = await fetch(`/api/tasks/${taskId}?confirm_social_delete=true`, { method: "DELETE" });
+        const response = await fetch(`/api/tasks/${taskId}?confirm_social_delete=${socialDeletePostIds.length > 0}`, { method: "DELETE", headers: {"Content-Type":"application/json"}, body: JSON.stringify({delete_social_post_ids:socialDeletePostIds}) });
         if (response.ok) removeTaskDrafts(taskId);
         return response;
       },
@@ -615,14 +616,14 @@ export default function ListPage() {
 
       {/* ── Delete confirmation dialog ────────────────────────── */}
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
-        <AlertDialogContent>
+        <AlertDialogContent className="max-h-[90dvh] overflow-y-auto">
           <AlertDialogHeader>
             <AlertDialogTitle>{t("delete.title", { count: selectedCount })}</AlertDialogTitle>
             <AlertDialogDescription>
               {t("delete.description", { count: selectedCount })}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          {showDeleteDialog && <SourceDeletionWarning taskIds={selectedTaskIds} onReady={setSocialDeleteReady} />}
+          {showDeleteDialog && <SourceDeletionWarning taskIds={selectedTaskIds} onReady={setSocialDeleteReady} onAffected={setSocialDeletePostIds} />}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={activeBatchAction === "delete"}>{t("cancelDialog")}</AlertDialogCancel>
             <AlertDialogAction

@@ -377,7 +377,7 @@ class SocialService:
 
     async def disconnect_all(self, user_id: str) -> int:
         """Disconnect every account of a user (account deletion)."""
-        accounts = await self.repo.list_accounts(self.db, user_id)
+        accounts = await self.repo.list_accounts(self.db, user_id, include_revoked=True)
         pending = []
         if hasattr(self.repo, "native_for_disconnect"):
             for account in accounts:
@@ -387,7 +387,7 @@ class SocialService:
                     await self._enqueue_recovery(post_id)
                 pending.extend(ids)
         if pending:
-            error = SocialValidationError("Linked YouTube deletion is pending. Wait for confirmation in Publishing, then delete your account again. Access is retained until removal is confirmed.")
+            error = SocialValidationError("Linked YouTube deletion is pending. Wait for confirmation in Publishing, then delete your account again. Reconnect any disconnected channel; your app account stays in place until removal is confirmed.")
             error.status_code = 409
             raise error
         removed = 0
@@ -752,8 +752,8 @@ class SocialService:
         post = await self.repo.get_user_post(self.db, user_id, post_id)
         if not post:
             return False
-        if post.get("provider_options", {}).get("native_schedule") and post["status"] not in {"published", "cancelled"}:
-            raise SocialValidationError("Cancel the YouTube schedule before deleting its history.")
+        if post.get("provider_options", {}).get("native_schedule") and (post["status"] not in {"published", "cancelled"} or (post["status"] == "cancelled" and post.get("external_post_id") and post.get("stage") != "deleted")):
+            raise SocialValidationError("This YouTube copy still needs its receipt. Remove the linked library source to delete the private copy before clearing this history.")
         if post["status"] in {"queued", "publishing"} or not await self.repo.delete_post(
             self.db, user_id, post_id
         ):

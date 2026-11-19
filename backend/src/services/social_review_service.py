@@ -203,7 +203,7 @@ class SocialReviewService:
             options = {"native_schedule": True, "category_id": policy.category_id,
                 "made_for_kids": policy.made_for_kids, "contains_synthetic_media": policy.contains_synthetic_media,
                 "approved_pattern": {"schedule": policy.schedule.model_dump(mode="json"), "timezone": policy.timezone},
-                "review": {"id": identity, "version": body.expected_version, "sha256": digest, "size_bytes": size, "automatic": automatic}}
+                "review": {"id": identity, "origin_clip_id": row["clip_id"], "version": body.expected_version, "sha256": digest, "size_bytes": size, "automatic": automatic}}
             post = await self.social.create_post(user_id, task_id=row["task_id"], clip_id=row["clip_id"], social_account_id=row["account_id"],
                 title=body.title, caption=body.caption, hashtags=body.hashtags, privacy_level="public", scheduled_for=slot.isoformat(),
                 provider_options=options, transactional=True, verified_media=True,

@@ -162,3 +162,18 @@ async def test_approved_render_is_frozen_when_the_library_clip_is_edited(review_
     await db_session.commit()
     claimed = await SocialRepository.claim_post(db_session, post_id, media_token_expires_at=datetime.now(timezone.utc))
     assert claimed["source_file_path"] == str(approved_path)
+
+async def test_failed_approved_upload_retains_its_render_for_retry_after_library_edit(review_item, client, auth_headers, db_session, app):
+    from src.media_storage import MediaStorage
+    from src.workers.media_cleanup import reference_index, referenced
+    item, payload, original, _ = review_item
+    response = await client.post(f"/social/review/{item['id']}/approve",headers=auth_headers,json={"expected_version":item["version"]})
+    post = response.json()["post"]
+    edited = original.with_name("new-library-render.mp4")
+    edited.write_bytes(original.read_bytes())
+    await db_session.execute(text("UPDATE social_posts SET status='failed',error_message='Temporary upload interruption' WHERE id=:id"), {"id":post["id"]})
+    await db_session.execute(text("UPDATE generated_clips SET file_path=:path WHERE id=:id"), {"id":payload["clip_id"],"path":str(edited)})
+    await db_session.commit()
+    storage = MediaStorage(app.state.config)
+    assert str(original) in (await reference_index(db_session,storage))["clips"]
+    assert await referenced(db_session,str(original),storage)

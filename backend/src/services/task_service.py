@@ -1283,7 +1283,7 @@ class TaskService(ClipEditingMixin):
         return await self.task_repo.get_user_tasks(self.db, user_id, limit)
 
     @serialized_task_edit
-    async def delete_task(self, task_id: str) -> None:
+    async def delete_task(self, task_id: str, *, social_post_ids: list[str] | None = None) -> None:
         """Delete a task and all its associated clips."""
         from ..recording.history import clear_deleted_task_history
 
@@ -1301,7 +1301,7 @@ class TaskService(ClipEditingMixin):
             if video_id:
                 await queue_delete(self.db, MediaStorage().youtube_metadata_reference(video_id))
         # Delete all clips for this task
-        await self.clip_repo.delete_clips_by_task(self.db, task_id)
+        await self.clip_repo.delete_clips_by_task(self.db, task_id,preserve_native=False,acknowledged_post_ids=social_post_ids)
 
         # Delete the task
         await self.task_repo.delete_task(self.db, task_id)

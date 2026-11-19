@@ -214,6 +214,8 @@ export default function TaskPage() {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [socialTaskDeleteReady, setSocialTaskDeleteReady] = useState(false);
   const [socialClipDeleteReady, setSocialClipDeleteReady] = useState(false);
+  const [socialTaskDeletePostIds, setSocialTaskDeletePostIds] = useState<string[]>([]);
+  const [socialClipDeletePostIds, setSocialClipDeletePostIds] = useState<string[]>([]);
   const [deletingClipId, setDeletingClipId] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [exportPreset, setExportPreset] = useState("original");
@@ -511,8 +513,8 @@ export default function TaskPage() {
 
     setIsDeleting(true);
     try {
-      const response = await fetch(`${taskApiUrl}/${params.id}?confirm_social_delete=true`, {
-        method: "DELETE",
+      const response = await fetch(`${taskApiUrl}/${params.id}?confirm_social_delete=${socialTaskDeletePostIds.length > 0}`, {
+        method: "DELETE", headers: {"Content-Type":"application/json"}, body: JSON.stringify({delete_social_post_ids:socialTaskDeletePostIds}),
       });
 
       if (response.ok) {
@@ -534,8 +536,8 @@ export default function TaskPage() {
     if (!session?.user?.id || !params.id || !socialClipDeleteReady) return;
 
     try {
-      const response = await fetch(`${taskApiUrl}/${params.id}/clips/${clipId}?confirm_social_delete=true`, {
-        method: "DELETE",
+      const response = await fetch(`${taskApiUrl}/${params.id}/clips/${clipId}?confirm_social_delete=${socialClipDeletePostIds.length > 0}`, {
+        method: "DELETE", headers: {"Content-Type":"application/json"}, body: JSON.stringify({delete_social_post_ids:socialClipDeletePostIds}),
       });
 
       if (response.ok) {
@@ -1300,7 +1302,7 @@ export default function TaskPage() {
         </SheetContent>
       </Sheet>
       <AlertDialog open={fontToDelete !== null} onOpenChange={(open) => { if (!open) setFontToDelete(null); }}>
-        <AlertDialogContent>
+        <AlertDialogContent className="max-h-[90dvh] overflow-y-auto">
           <AlertDialogHeader><AlertDialogTitle>{t("deleteFontTitle")}</AlertDialogTitle>
             <AlertDialogDescription>{t("deleteFontBody", { name: fontToDelete?.display_name ?? "" })}</AlertDialogDescription>
           </AlertDialogHeader>
@@ -1311,14 +1313,14 @@ export default function TaskPage() {
       </AlertDialog>
       {/* Delete generation confirmation */}
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
-        <AlertDialogContent>
+        <AlertDialogContent className="max-h-[90dvh] overflow-y-auto">
           <AlertDialogHeader>
             <AlertDialogTitle>{t("deleteGenerationTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
               {t("deleteGenerationBody")}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          {showDeleteDialog && <SourceDeletionWarning taskIds={[String(params.id)]} onReady={setSocialTaskDeleteReady} />}
+          {showDeleteDialog && <SourceDeletionWarning taskIds={[String(params.id)]} onReady={setSocialTaskDeleteReady} onAffected={setSocialTaskDeletePostIds} />}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isDeleting}>{t("cancel")}</AlertDialogCancel>
             <AlertDialogAction onClick={handleDeleteTask} disabled={isDeleting || !socialTaskDeleteReady} className="bg-red-600 hover:bg-red-700">
@@ -1330,14 +1332,14 @@ export default function TaskPage() {
 
       {/* Delete Clip Confirmation Dialog */}
       <AlertDialog open={!!deletingClipId} onOpenChange={(open) => !open && setDeletingClipId(null)}>
-        <AlertDialogContent>
+        <AlertDialogContent className="max-h-[90dvh] overflow-y-auto">
           <AlertDialogHeader>
             <AlertDialogTitle>{t("deleteClipTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
               {t("deleteClipBody")}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          {deletingClipId && <SourceDeletionWarning taskIds={[String(params.id)]} clipId={deletingClipId} onReady={setSocialClipDeleteReady} />}
+          {deletingClipId && <SourceDeletionWarning taskIds={[String(params.id)]} clipId={deletingClipId} onReady={setSocialClipDeleteReady} onAffected={setSocialClipDeletePostIds} />}
           <AlertDialogFooter>
             <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
             <AlertDialogAction
