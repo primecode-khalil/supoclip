@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from sqlalchemy import text
@@ -9,7 +10,7 @@ from sqlalchemy import text
 
 class YouTubeUploadRepository:
     FIELDS = frozenset({"session_url_encrypted", "confirmed_bytes", "bytes_started", "video_id", "stage",
-        "reason_code", "actual_visibility", "next_attempt_at", "processing_started_at"})
+        "reason_code", "actual_visibility", "next_attempt_at", "processing_started_at", "desired_publish_at", "confirmed_publish_at", "schedule_requested_at"})
 
     @staticmethod
     async def get(db, post_id: str) -> dict | None:
@@ -91,3 +92,51 @@ class YouTubeUploadRepository:
             """), {"account": account_id, "user": row["user_id"]})
         await db.commit()
         return True
+
+    @staticmethod
+    async def native_finish(db, post_id, token, account_id, *, stage, status, visibility, publish_at=None, next_at=None):
+        """Fence the checkpoint and publish truthful state together, honoring late cancellation."""
+        post = (await db.execute(text("SELECT user_id,provider_options,clip_id FROM social_posts WHERE id=:id FOR UPDATE"), {"id": post_id})).mappings().first()
+        if not post:
+            await db.rollback()
+            return False
+        cancelling = post["provider_options"].get("cancel_requested") or post["clip_id"] is None
+        if cancelling and status == "scheduled":
+            stage, status, next_at = "cancelling", "publishing", datetime.now(timezone.utc)
+        review_id = post["provider_options"].get("review", {}).get("id")
+        if publish_at and review_id:
+            updated = await db.execute(text("""
+                UPDATE social_publication_slots s SET publish_at=:at
+                WHERE review_id=:review AND NOT EXISTS (
+                    SELECT 1 FROM social_publication_slots other WHERE other.account_id=s.account_id
+                      AND other.publish_at=:at AND other.cancelled_at IS NULL AND other.review_id<>s.review_id)
+            """), {"at":publish_at,"review":review_id})
+            if updated.rowcount != 1:
+                await db.rollback()
+                raise ValueError("YouTube's schedule conflicts with another reservation")
+        row = (await db.execute(text("""
+            UPDATE youtube_uploads SET stage=:stage,actual_visibility=:privacy,confirmed_publish_at=:at,
+              next_attempt_at=:next,reason_code=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=NOW()
+            WHERE post_id=:id AND lease_token=:token AND lease_expires_at>NOW() RETURNING video_id
+        """), {"id": post_id,"token":token,"stage":stage,"privacy":visibility,"at":publish_at,"next":next_at})).mappings().first()
+        if not row:
+            await db.rollback()
+            return False
+        await db.execute(text("""
+            UPDATE social_posts SET status=:status,scheduled_for=COALESCE(:at,scheduled_for),
+              published_at=CASE WHEN CAST(:status AS VARCHAR)='published' THEN COALESCE(published_at,NOW()) ELSE published_at END,
+              error_message=NULL,updated_at=NOW() WHERE id=:id
+        """), {"id":post_id,"status":status,"at":publish_at})
+        if visibility == "private" and row["video_id"]:
+            await db.execute(text("UPDATE social_accounts SET metadata=metadata || jsonb_build_object('youtube_private_test_completed_at',NOW()) WHERE id=:id"), {"id":account_id})
+        review_id = post["provider_options"].get("review", {}).get("id")
+        if status == "cancelled" and review_id:
+            await db.execute(text("UPDATE social_publication_slots SET cancelled_at=NOW() WHERE review_id=:id"), {"id":review_id})
+            await db.execute(text("UPDATE social_review_items SET status='cancelled' WHERE id=:id"), {"id":review_id})
+        await db.commit()
+        return True
+
+    @staticmethod
+    async def defer_until(db, post_id, until):
+        await db.execute(text("UPDATE youtube_uploads SET next_attempt_at=:at WHERE post_id=:id AND (lease_expires_at IS NULL OR lease_expires_at<NOW())"), {"id":post_id,"at":until})
+        await db.commit()

@@ -593,6 +593,10 @@ class SocialService:
         # state collapses into one job. The claim in ``publish_post`` is what
         # actually guarantees a single upload.
         kwargs: Dict[str, Any] = {"_job_id": f"social:{post_id}:{attempts}"}
+        from ..social.youtube import YouTubeProvider
+        post = await self.repo.get_post(self.db, post_id)
+        if post and post.get("provider") == "youtube" and isinstance(get_provider("youtube", self.config), YouTubeProvider):
+            kwargs["_queue_name"] = "supoclip_cron"
         if defer_seconds > 0:
             kwargs["_defer_by"] = timedelta(seconds=defer_seconds)
         try:
@@ -600,6 +604,15 @@ class SocialService:
         except DuplicateJobError:
             # That job is still waiting and will claim the post itself.
             logger.info("Publish job for post %s attempt %s is already queued", post_id, attempts)
+
+    async def _enqueue_recovery(self, post_id):
+        # A finished ARQ attempt may retain its result; a minute bucket permits the next poll.
+        try:
+            await self.queue_adapter.enqueue_job(PUBLISH_JOB_NAME, post_id,
+                _job_id=f"youtube-reconcile:{post_id}:{int(datetime.now(timezone.utc).timestamp() // 60)}",
+                _queue_name="supoclip_cron")
+        except DuplicateJobError:
+            pass
 
     async def _enqueue_or_fail(self, post_id: str, attempts: int) -> None:
         """Enqueue a freshly queued post; never leave it queued without a job."""
@@ -635,6 +648,14 @@ class SocialService:
         return post
 
     async def cancel_post(self, user_id: str, post_id: str) -> Dict[str, Any]:
+        existing = await self.repo.get_user_post(self.db, user_id, post_id)
+        if existing and existing.get("provider_options", {}).get("native_schedule"):
+            if existing["status"] == "published":
+                raise SocialValidationError("This video is already public. Manage it in YouTube Studio.")
+            if existing["status"] != "cancelled":
+                await self.repo.request_native_cancel(self.db, user_id, post_id)
+                await self._enqueue_recovery(post_id)
+            return await self.repo.get_post(self.db, post_id)
         # Conditional update: a worker claim or a second click can't race it.
         if not await self.repo.cancel_post(self.db, user_id, post_id):
             post = await self.repo.get_user_post(self.db, user_id, post_id)
@@ -646,6 +667,31 @@ class SocialService:
         post = await self.repo.get_post(self.db, post_id)
         assert post is not None
         return post
+
+    async def reschedule_post(self, user_id, post_id, custom_local):
+        from sqlalchemy import text
+        from ..repositories.social_publication_policy_repository import SocialPublicationPolicyRepository as Policies
+        post = await self.repo.get_user_post(self.db, user_id, post_id)
+        if not post:
+            raise SocialNotFound("Post not found")
+        if not post.get("provider_options", {}).get("native_schedule") or post["status"] in {"published", "cancelled"} or post["provider_options"].get("cancel_requested"):
+            raise SocialValidationError("Only an approved future YouTube publication can be rescheduled.")
+        await Policies.lock_account(self.db, user_id, post["social_account_id"])
+        # Do not change the target while another worker is updating Google.
+        state = (await self.db.execute(text("SELECT lease_expires_at FROM youtube_uploads WHERE post_id=:id FOR UPDATE"), {"id":post_id})).mappings().first()
+        if state and state["lease_expires_at"] and state["lease_expires_at"] > datetime.now(timezone.utc):
+            await self.db.rollback()
+            raise SocialValidationError("This video is being updated. Try rescheduling again shortly.")
+        try:
+            slot = await Policies.reserve(self.db, post["provider_options"]["review"]["id"], datetime.now(timezone.utc), custom_local=custom_local, commit=False)
+        except (ValueError, KeyError) as exc:
+            await self.db.rollback()
+            raise SocialValidationError(str(exc)) from None
+        await self.db.execute(text("UPDATE social_posts SET scheduled_for=:at,status=CASE WHEN status='queued' THEN 'queued' ELSE 'publishing' END,updated_at=NOW() WHERE id=:id"), {"id":post_id,"at":slot})
+        await self.db.execute(text("UPDATE youtube_uploads SET desired_publish_at=:at,stage='scheduling',reason_code=NULL,next_attempt_at=NOW() WHERE post_id=:id"), {"id":post_id,"at":slot})
+        await self.db.commit()
+        await self._enqueue_recovery(post_id)
+        return await self.repo.get_post(self.db, post_id)
 
     async def retry_post(self, user_id: str, post_id: str) -> Dict[str, Any]:
         post = await self.repo.get_user_post(self.db, user_id, post_id)
@@ -682,6 +728,8 @@ class SocialService:
         post = await self.repo.get_user_post(self.db, user_id, post_id)
         if not post:
             return False
+        if post.get("provider_options", {}).get("native_schedule") and post["status"] == "scheduled":
+            raise SocialValidationError("Cancel the YouTube schedule before deleting its history.")
         if post["status"] in {"queued", "publishing"} or not await self.repo.delete_post(
             self.db, user_id, post_id
         ):
@@ -1012,7 +1060,11 @@ class SocialService:
         return await self.repo.get_post(self.db, post["id"]) or post
 
     async def resolve_pending_posts(self, limit: int = 100) -> int:
+        native_due = await self.repo.native_jobs_due(self.db, limit=limit) if hasattr(self.repo, "native_jobs_due") else []
+        for item in native_due:
+            await self._enqueue_recovery(item["id"])
         posts = await self.repo.list_pending_publishes(self.db, limit=limit)
+        posts = [p for p in posts if not p.get("provider_options", {}).get("native_schedule")]
         for post in posts:
             try:
                 await self.resolve_pending_post(post)
@@ -1023,7 +1075,7 @@ class SocialService:
                     type(exc).__name__,
                     redact(exc),
                 )
-        return len(posts)
+        return len(posts) + len(native_due)
 
     async def sweep_stale_publishing(self) -> List[str]:
         """Fail posts whose worker vanished mid-upload (never re-uploaded)."""

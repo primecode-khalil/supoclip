@@ -634,6 +634,7 @@ class SocialRepository:
                 DELETE FROM social_posts
                 WHERE id = :id AND user_id = :user_id
                   AND status NOT IN ('queued', 'publishing')
+                  AND NOT (provider_options @> '{"native_schedule": true}' AND status='scheduled')
                 RETURNING id
                 """
             ),
@@ -708,6 +709,16 @@ class SocialRepository:
             return
         try:
             async with db.begin_nested():
+                await db.execute(text(f"""
+                    UPDATE social_posts SET provider_options=provider_options || '{{"cancel_requested": true}}'::jsonb,
+                        status='publishing',pending_handle='youtube:' || id,updated_at=NOW()
+                    WHERE {clause} AND provider_options @> '{{"native_schedule": true}}'
+                      AND status NOT IN ('published','cancelled')
+                """), params)
+                await db.execute(text("""
+                    UPDATE youtube_uploads SET next_attempt_at=NOW()
+                    WHERE post_id IN (SELECT id FROM social_posts WHERE provider_options @> '{"native_schedule": true,"cancel_requested": true}')
+                """))
                 await db.execute(
                     text(
                         f"""
@@ -716,6 +727,7 @@ class SocialRepository:
                             error_message = 'The clip was deleted before publishing.',
                             updated_at = NOW()
                         WHERE {clause} AND status IN ('scheduled', 'queued')
+                          AND NOT (provider_options @> '{{"native_schedule": true}}')
                         """
                     ),
                     params,
@@ -817,6 +829,7 @@ class SocialRepository:
                 WHERE id IN (
                     SELECT id FROM social_posts
                     WHERE status = 'scheduled'
+                      AND NOT (provider_options @> '{"native_schedule": true}')
                       AND scheduled_for IS NOT NULL
                       AND scheduled_for <= NOW()
                     ORDER BY scheduled_for ASC
@@ -1211,6 +1224,41 @@ class SocialRepository:
             {"user_id": user_id, "limit": limit},
         )
         return [SocialRepository.serialize_post(row) for row in result.fetchall()]
+
+    @staticmethod
+    async def request_native_cancel(db, user_id, post_id):
+        await db.execute(text("""
+            UPDATE social_posts SET provider_options=provider_options || '{"cancel_requested": true}'::jsonb,
+              status='publishing',pending_handle='youtube:' || id,updated_at=NOW()
+            WHERE id=:id AND user_id=:user AND status NOT IN ('published','cancelled')
+              AND provider_options @> '{"native_schedule": true}'
+        """), {"id":post_id,"user":user_id})
+        await db.execute(text("UPDATE youtube_uploads SET next_attempt_at=NOW() WHERE post_id=:id"), {"id":post_id})
+        await db.commit()
+
+    @staticmethod
+    async def finish_unstarted_native_cancel(db, post_id):
+        await db.execute(text("""
+            UPDATE social_posts SET status='cancelled',error_message=NULL,updated_at=NOW()
+            WHERE id=:id AND provider_options @> '{"native_schedule": true}'
+              AND (provider_options @> '{"cancel_requested": true}' OR clip_id IS NULL)
+        """), {"id":post_id})
+        await db.execute(text("UPDATE social_publication_slots SET cancelled_at=NOW() WHERE review_id IN (SELECT id FROM social_review_items WHERE post_id=:id)"), {"id":post_id})
+        await db.execute(text("UPDATE social_review_items SET status='cancelled' WHERE post_id=:id"), {"id":post_id})
+        await db.commit()
+
+    @staticmethod
+    async def native_jobs_due(db, limit=100):
+        rows = (await db.execute(text("""
+            SELECT p.id,p.attempts FROM social_posts p LEFT JOIN youtube_uploads u ON u.post_id=p.id
+            WHERE p.provider_options @> '{"native_schedule": true}'
+              AND p.status IN ('queued','publishing','scheduled')
+              AND (u.post_id IS NULL OR ((u.next_attempt_at IS NULL OR u.next_attempt_at<=NOW())
+                AND (u.lease_expires_at IS NULL OR u.lease_expires_at<NOW())
+                AND u.stage NOT IN ('ready','cancelled','needs_attention','reconnect_required')))
+            ORDER BY p.updated_at LIMIT :limit
+        """), {"limit":limit})).mappings().all()
+        return [dict(r) for r in rows]
 
 
 def _to_float(value: Any) -> Optional[float]:

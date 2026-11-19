@@ -12,6 +12,8 @@ from ..social.base import PublishRequest, SocialProviderError
 from ..social.youtube_metadata import build_youtube_metadata
 from ..social.youtube_upload import YouTubeUploadError, UploadProgress
 from ..utils.async_helpers import run_in_thread
+from ..repositories.social_provider_limit_repository import SocialProviderLimitRepository as Limits
+from .youtube_native_schedule import YouTubeNativeSchedule, native, withdrawing
 
 
 def _identity(path: str) -> tuple[str, int]:
@@ -22,7 +24,7 @@ def _identity(path: str) -> tuple[str, int]:
     return digest.hexdigest(), Path(path).stat().st_size
 
 
-class YouTubePublishService:
+class YouTubePublishService(YouTubeNativeSchedule):
     def __init__(self, social_service, provider):
         self.social = social_service
         self.db = social_service.db
@@ -36,14 +38,14 @@ class YouTubePublishService:
         post = await self._post(post_id)
         if not post or post.get("provider") != "youtube":
             return post
-        if post["status"] not in {"queued", "publishing"}:
+        if post["status"] not in {"queued", "publishing", "scheduled"}:
             return post
         state = await Uploads.get(self.db, post_id)
         if post["status"] == "publishing" and not state and post.get("pending_handle") != f"youtube:{post_id}":
             # An older worker may have uploaded without any recoverable session.
             # Never turn that unknown outcome into a new upload automatically.
             return post
-        if state and state["stage"] in {"ready", "needs_attention", "reconnect_required"} and post["status"] != "queued":
+        if state and state["stage"] in {"ready", "needs_attention", "reconnect_required"} and post["status"] != "queued" and not (native(post) and withdrawing(post)):
             return post
         if post["status"] == "queued":
             post = await self.social.repo.claim_post(self.db, post_id,
@@ -62,6 +64,10 @@ class YouTubePublishService:
             await self.social.repo.update_post(self.db, post_id, status="failed", error_message="Reconnect the destination YouTube account.")
             return await self._post(post_id)
 
+        if native(post) and withdrawing(post) and not (state and state.get("video_id")):
+            await self.db.commit()
+            await self._cancel_transfer(post, account, state)
+            return await self._post(post_id)
         # An accepted video never requires the original file for reconciliation.
         if state and state.get("video_id"):
             await self.db.commit()
@@ -85,6 +91,17 @@ class YouTubePublishService:
             return await self._post(post_id)
         token = lease["lease_token"]
         try:
+            reviewed = post.get("provider_options", {}).get("review", {})
+            if reviewed and (digest != reviewed.get("sha256") or size != reviewed.get("size_bytes")):
+                raise YouTubeUploadError("The approved video changed. Review its new render before uploading.", "media_changed", outcome_unknown=True)
+            latest = await self._post(post_id)
+            await self.db.commit()
+            if native(latest) and withdrawing(latest):
+                await Uploads.update(self.db, post_id, token, release=True, stage="cancelling", next_attempt_at=datetime.now(timezone.utc))
+                return await self._post(post_id)
+            if native(post) and await self._paused(post):
+                await Uploads.update(self.db, post_id, token, release=True, stage="paused", next_attempt_at=datetime.now(timezone.utc)+timedelta(minutes=1))
+                return await self._post(post_id)
             if digest != lease["media_sha256"] or size != lease["size_bytes"]:
                 raise YouTubeUploadError("The clip changed after upload began. The original session has been retained.", "media_changed", outcome_unknown=True)
             if not await self.social.has_access(post["user_id"]):
@@ -92,6 +109,10 @@ class YouTubePublishService:
             if "youtube" not in self.social.config.social_publishing_providers or not self.provider.is_configured:
                 raise YouTubeUploadError("YouTube publishing is not configured or has been disabled.", "publishing_disabled")
             await self.social._ensure_not_paused("youtube", post["user_id"], any_platform=True)
+            wait = await Limits.due(self.db, self.social.config, "uploads")
+            if wait:
+                await Uploads.update(self.db, post_id, token, release=True, stage="waiting_for_quota", reason_code="project_quota", next_attempt_at=wait)
+                return await self._post(post_id)
             access_token = await self.social._get_valid_access_token(account)
             await self.db.commit()
             uri = decrypt_setting_value(lease["session_url_encrypted"]) if lease.get("session_url_encrypted") else None
@@ -118,6 +139,7 @@ class YouTubePublishService:
         except SocialProviderError as exc:
             await self._failure(post, account, lease, exc)
         except Exception:
+            await self.db.rollback()
             # Encryption/configuration/storage errors must not include private URI data.
             await self._failure(post, account, lease, YouTubeUploadError("The saved upload needs attention. Its checkpoint has been retained.", "checkpoint_error", outcome_unknown=True))
         return await self._post(post_id)
@@ -151,6 +173,8 @@ class YouTubePublishService:
                     await self.social.repo.update_post(self.db, post["id"], status="publishing", error_message="YouTube access refreshed; resuming the saved upload.")
                 return
         reason = getattr(exc, "reason_code", "temporary" if exc.retryable else "rejected")
+        if reason == "project_quota":
+            await Limits.defer(self.db, self.social.config, "general" if lease.get("video_id") else "uploads")
         stage, status, next_at = "needs_attention", "failed", None
         if exc.reauth:
             stage = "reconnect_required"
@@ -172,8 +196,12 @@ class YouTubePublishService:
         token = lease["lease_token"]
         try:
             started = lease.get("processing_started_at") or lease["created_at"]
-            if datetime.now(timezone.utc) - started > timedelta(hours=6):
+            if not lease.get("schedule_requested_at") and datetime.now(timezone.utc) - started > timedelta(hours=6):
                 raise YouTubeUploadError("YouTube processing could not be confirmed within six hours. Retry to check the same video again.", "processing_timeout", outcome_unknown=True)
+            wait = await Limits.due(self.db, self.social.config, "general")
+            if wait:
+                await Uploads.update(self.db, post["id"], token, release=True, stage="waiting_for_quota", reason_code="project_quota", next_attempt_at=wait)
+                return
             access_token = await self.social._get_valid_access_token(account)
             await self.db.commit()
             video = await run_in_thread(self.provider.fetch_video_status, access_token, lease["video_id"])
@@ -187,6 +215,9 @@ class YouTubePublishService:
                 return
             if (video.get("snippet") or {}).get("channelId") != account["external_account_id"]:
                 raise YouTubeUploadError("The uploaded video's destination could not be confirmed. Check the connected channel.", "destination_mismatch", outcome_unknown=True)
+            if native(post):
+                await self._native_status(post, account, lease, access_token, video)
+                return
             visibility = status.get("privacyStatus")
             if visibility != lease["metadata_snapshot"]["status"]["privacyStatus"]:
                 await Uploads.update(self.db, post["id"], token, actual_visibility=visibility)
@@ -197,4 +228,5 @@ class YouTubePublishService:
         except SocialProviderError as exc:
             await self._failure(post, account, lease, exc)
         except Exception:
+            await self.db.rollback()
             await self._failure(post, account, lease, YouTubeUploadError("The video's saved processing status needs attention.", "checkpoint_error", outcome_unknown=True))

@@ -47,13 +47,13 @@ class SocialPublicationPolicyRepository:
 
     @staticmethod
     async def reserve(db, review_id: str, now: datetime, *, custom_local: str | None = None,
-                      move_if_late: bool = False, commit: bool = True) -> datetime:
+                      move_if_late: bool = False, commit: bool = True, approved_pattern: dict | None = None) -> datetime:
         from ..services.social_publication_policy import PublishingPolicy, PUBLICATION_LEAD, local_publication_time
         review = (await db.execute(text("SELECT user_id,account_id FROM social_review_items WHERE id=:id"), {"id": review_id})).mappings().first()
         if not review or not await SocialPublicationPolicyRepository.lock_account(db, review["user_id"], review["account_id"]):
             raise ValueError("Review destination is unavailable")
         row = await SocialPublicationPolicyRepository.get(db, review["user_id"], review["account_id"])
-        policy = PublishingPolicy.model_validate(row["policy"] if row else {})
+        policy = PublishingPolicy.model_validate({**(row["policy"] if row else {}), **(approved_pattern or {})})
         existing = (await db.execute(text("SELECT publish_at FROM social_publication_slots WHERE review_id=:id AND cancelled_at IS NULL"), {"id": review_id})).scalar_one_or_none()
         if existing and not custom_local and (not move_if_late or existing >= now + PUBLICATION_LEAD):
             if commit:

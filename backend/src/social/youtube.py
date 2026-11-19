@@ -39,6 +39,7 @@ API_BASE = "https://www.googleapis.com/youtube/v3"
 UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
 
 SCOPES = (
+    "https://www.googleapis.com/auth/youtube.force-ssl",
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube.readonly",
 )
@@ -244,6 +245,16 @@ class YouTubeProvider(YouTubeUploadProtocol, SocialProvider):
             return next((item for item in items if item.get("id") == video_id), {})
         except (ValueError, AttributeError, TypeError):
             raise YouTubeUploadError("YouTube's processing status is temporarily unavailable.", "temporary", retryable=True) from None
+
+    def update_video_status(self, access_token: str, video_id: str, status: dict) -> dict:
+        response = self._upload_request("put", f"{API_BASE}/videos", access_token,
+            params={"part": "status"}, json={"id": video_id, "status": status})
+        if response.status_code != 200:
+            raise_youtube_error(response)
+        try:
+            return response.json()
+        except ValueError:
+            raise YouTubeUploadError("YouTube's update response is unavailable; the same video will be checked.", "temporary", retryable=True) from None
 
     # -- analytics ------------------------------------------------------
     def fetch_metrics(

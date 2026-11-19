@@ -32,6 +32,7 @@ from .media_cleanup import cleanup_media, copy_pending_uploads, sweep_orphaned_m
 from .media_replication import check_media_storage, replicate_pending_media  # noqa: E402
 from .tasks import (  # noqa: E402
     dispatch_scheduled_social_posts,
+    publish_social_post,
     refresh_social_metrics,
 )
 
@@ -48,7 +49,7 @@ def scheduled(coroutine, **kwargs):
 
 class CronWorkerSettings:
     config = Config()
-    functions = []
+    functions = [publish_social_post]
     queue_name = CRON_QUEUE_NAME
     redis_settings = RedisSettings(
         host=config.redis_host,

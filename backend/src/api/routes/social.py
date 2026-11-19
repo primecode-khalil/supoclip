@@ -375,6 +375,19 @@ async def cancel_post(post_id: str, request: Request, db: AsyncSession = Depends
         raise _http_error(exc)
 
 
+@router.post("/posts/{post_id}/reschedule")
+async def reschedule_post(post_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    user_id = await _allowed_user_id(request, db, session_only=True)
+    body = await _json_body(request)
+    custom = body.get("custom_local")
+    if not isinstance(custom, str) or not 1 <= len(custom) <= 32:
+        raise HTTPException(status_code=400, detail="Choose a future local publication time.")
+    try:
+        return {"post": await _service(request, db).reschedule_post(user_id, post_id, custom)}
+    except SocialError as exc:
+        raise _http_error(exc)
+
+
 @router.post("/posts/{post_id}/retry")
 async def retry_post(post_id: str, request: Request, db: AsyncSession = Depends(get_db)):
     user_id = await _allowed_user_id(request, db)

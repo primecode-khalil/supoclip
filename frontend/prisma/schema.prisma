@@ -645,6 +645,9 @@ model YouTubeUpload {
   attempts Int @default(0)
   lease_token String?
   lease_expires_at DateTime? @db.Timestamptz
+  desired_publish_at DateTime? @db.Timestamptz
+  confirmed_publish_at DateTime? @db.Timestamptz
+  schedule_requested_at DateTime? @db.Timestamptz
   processing_started_at DateTime? @db.Timestamptz
   created_at DateTime @default(now()) @db.Timestamptz
   updated_at DateTime @default(now()) @db.Timestamptz
