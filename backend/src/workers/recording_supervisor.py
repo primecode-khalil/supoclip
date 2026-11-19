@@ -29,6 +29,7 @@ from ..recording.automation_models import RecordingWindow
 from ..recording.automation_schema import AutomationPolicy
 from ..recording.automation_store import LostLeaseError
 from ..recording.capture import CaptureProcess, ProbeState, probe_channel
+from ..recording.history import visible_history
 from ..recording.pipeline import NativeClient, contained_path, retry_delay
 from ..recording.runner import AutomationPipeline, store_call
 from ..recording.windows import PreparedWindow, prepare_window
@@ -190,7 +191,7 @@ class ChannelRunner:
         async with AsyncSessionLocal() as db:
             from sqlalchemy import func
             return (await db.execute(select(func.count()).select_from(RecordingWindow).where(
-                RecordingWindow.channel_id == self.channel.channel_id, RecordingWindow.status != "completed"))).scalar_one()
+                RecordingWindow.channel_id == self.channel.channel_id, visible_history(), RecordingWindow.status != "completed"))).scalar_one()
 
     async def _retention(self):
         cutoff = time.time() - self.channel.policy.retain_days * 86400
@@ -202,10 +203,10 @@ class ChannelRunner:
                 windows = (await db.execute(select(RecordingWindow).where(RecordingWindow.channel_id == self.channel.channel_id,
                     RecordingWindow.session_id == metadata["session_id"], RecordingWindow.epoch == metadata["epoch"]))).scalars().all()
             known = self.segments.get(epoch, {})
-            # Never remove partial/unregistered/pending/blocked originals, nor a
-            # local archive whose offsite copy has not been acknowledged.
+            # Retain unfinished work and unacknowledged archives. Owner-cleared
+            # work is terminal for retention, but still needs full file coverage.
             originals = {path.resolve() for path in (epoch / "segments").glob("chunk_*.mkv")}
-            if not known or originals != {segment.path.resolve() for segment in known.values()} or len(windows) != len(known) or any(w.status != "completed" or (w.details.get("policy", {}).get("archive") and not w.details.get("archived")) for w in windows):
+            if not known or originals != {segment.path.resolve() for segment in known.values()} or len(windows) != len(known) or any((w.status != "completed" and w.details.get("history_cleared") is not True) or (w.details.get("policy", {}).get("archive") and not w.details.get("archived")) for w in windows):
                 continue
             await self.pipeline._live(self.token)
             await asyncio.to_thread(shutil.rmtree, epoch)

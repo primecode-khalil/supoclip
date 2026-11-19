@@ -1274,6 +1274,9 @@ class TaskService(ClipEditingMixin):
     @serialized_task_edit
     async def delete_task(self, task_id: str) -> None:
         """Delete a task and all its associated clips."""
+        from ..recording.history import clear_deleted_task_history
+
+        await clear_deleted_task_history(self.db, task_id)
         task = await self.task_repo.get_task_by_id(self.db, task_id)
         source_url = task.get("source_url") if task else None
         if source_url and source_url.startswith("upload://"):

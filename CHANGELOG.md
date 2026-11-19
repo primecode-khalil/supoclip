@@ -4,6 +4,10 @@ What changed in SupoClip for people using the product. Newest dates are first.
 
 Add a line here when a pull request changes something a user can see. Use **New**, **Improved**, **Fixed**, or **Under the hood**, describe the change in plain language, and link the pull request. Skip internal-only work, or fold it into one **Under the hood** line. Do not include customer names, email addresses, user IDs, or anything else private.
 
+## 2026-11-19
+
+- **New:** Clear failed or all finished clip-window history from Live channels while keeping captured recordings and library clips. Deleting a generation from the library also removes its attached window from recent activity, and cleared work stays cleared after recorder recovery. ([#1](https://github.com/primecode-khalil/supoclip/pull/1))
+
 ## 2026-11-18
 
 - **Fixed:** YouTube live recording preserves the shared audio/video clock when merging separate streams, preventing early audio in generated clips and keeping caption timing aligned. Previously captured media needs a corrected source before regeneration. ([#1](https://github.com/primecode-khalil/supoclip/pull/1))

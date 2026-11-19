@@ -19,3 +19,28 @@ it("explains that the daily limit keeps extra clips in the library", () => {
   expect(screen.getByText("Daily publishing limit reached. Remaining clips are saved in your library.")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Open clips and generation" })).toHaveAttribute("href", "/tasks/generation");
 });
+
+it("confirms clearing failed history without deleting recordings", async () => {
+  const clear = vi.fn().mockResolvedValue(1);
+  render(<WindowActivity data={data} onRetry={vi.fn()} onClear={clear} />);
+  fireEvent.click(screen.getByRole("button", { name: "Clear failed" }));
+  expect(screen.getByRole("alertdialog")).toHaveTextContent("Captured recordings, library clips, and published posts are kept.");
+  expect(clear).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(clear).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Clear failed" }));
+  fireEvent.click(screen.getByRole("button", { name: "Clear history" }));
+  await waitFor(() => expect(clear).toHaveBeenCalledWith("failed"));
+  expect(await screen.findByRole("status")).toHaveTextContent("1 window cleared");
+});
+
+it("keeps history visible and reports failed clear requests", async () => {
+  const clear = vi.fn().mockRejectedValue(new Error("The recording service is temporarily unavailable"));
+  render(<WindowActivity data={data} onRetry={vi.fn()} onClear={clear} />);
+  fireEvent.click(screen.getByRole("button", { name: "Clear all finished" }));
+  expect(screen.getByRole("alertdialog")).toHaveTextContent("Active work continues.");
+  fireEvent.click(screen.getByRole("button", { name: "Clear history" }));
+  await waitFor(() => expect(clear).toHaveBeenCalledWith("finished"));
+  expect(await screen.findByRole("alert")).toHaveTextContent("temporarily unavailable");
+  expect(screen.getByText("Window 1")).toBeInTheDocument();
+});

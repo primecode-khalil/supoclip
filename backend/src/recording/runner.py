@@ -15,6 +15,7 @@ from ..source_identity import source_admission_lock
 from .automation_schema import AutomationPolicy
 from .automation_store import AutomationStore, LostLeaseError
 from .capture import _terminate
+from .errors import WindowClearedError
 from .pipeline import NativeClient, PipelineBlocked, PipelineRetry, choose_clips, contained_path, retry_delay, overlaps_reserved, _seconds
 
 
@@ -129,6 +130,12 @@ class AutomationPipeline:
 
     async def step(self, channel, token, window):
         """Advance work without waiting for a render or remote post to finish."""
+        try:
+            await self._advance(channel, token, window)
+        except WindowClearedError:
+            return  # An owner cleared this work after the pending list was read.
+
+    async def _advance(self, channel, token, window):
         try:
             await self._step(channel, token, window)
         except LostLeaseError:

@@ -670,6 +670,15 @@ async def _create_task(request: Request, db: AsyncSession, attempt: SourceAttemp
         upload_options["workflow"] = workflow_spec.workflow
         upload_options["workflow_options"] = workflow_options
     upload_request_key = _upload_request_key(request, raw_source["url"], upload_options)
+    history_window_id = None
+    if db is not None:
+        from ...recording.history import recording_window_for_task
+        from ...recording.errors import RecordingError
+
+        try:
+            history_window_id = await recording_window_for_task(db, user_id, _request_idempotency_key(request), raw_source["url"])
+        except RecordingError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     if upload_request_key and db is not None:
         existing = await TaskRepository.find_recent_upload_task(db, user_id, upload_request_key)
         if existing is not None:
@@ -747,6 +756,7 @@ async def _create_task(request: Request, db: AsyncSession, attempt: SourceAttemp
                         "processing_job_id": processing_job_id,
                         "clip_length": clip_length,
                         "enqueued_at": datetime.now(timezone.utc).isoformat(),
+                        **({"recording_window_id": history_window_id} if history_window_id else {}),
                         **({"durable_upload_request": True} if upload_request_key and _request_idempotency_key(request) else {}),
                         **({"source_key": source_key} if source_key else {}),
                         **_stream_resolution_metadata(stream_metadata),

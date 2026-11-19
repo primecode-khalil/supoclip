@@ -14,7 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..models import RecordingChannel, RecordingSession, Task
 from .automation_models import ChannelAutomation, RecordingLease, RecordingWindow
 from .automation_schema import AutomationPolicy, WindowRegistration
-from .errors import RecordingError
+from .errors import RecordingError, WindowClearedError
+from .history import visible_history
 
 
 @dataclass(frozen=True)
@@ -251,7 +252,7 @@ class AutomationStore:
         if not 1 <= limit <= 1000:
             raise ValueError("Limit must be 1 to 1000")
         _, _, now = await self._fenced(token)
-        query = select(RecordingWindow).where(RecordingWindow.channel_id == token.channel_id, RecordingWindow.status != "completed", (RecordingWindow.next_attempt_at.is_(None)) | (RecordingWindow.next_attempt_at <= now))
+        query = select(RecordingWindow).where(RecordingWindow.channel_id == token.channel_id, visible_history(), RecordingWindow.status != "completed", (RecordingWindow.next_attempt_at.is_(None)) | (RecordingWindow.next_attempt_at <= now))
         if not include_blocked:
             query = query.where(RecordingWindow.status != "blocked")
         rows = (await self.db.execute(query.order_by(RecordingWindow.created_at, RecordingWindow.id).limit(limit).execution_options(populate_existing=True))).scalars().all()
@@ -266,6 +267,9 @@ class AutomationStore:
         if window is None:
             await self.db.rollback()
             raise RecordingError("Window not found", 404)
+        if window.details.get("history_cleared") is True:
+            await self.db.rollback()
+            raise WindowClearedError()
         if "status" in values and values["status"] not in _WINDOW_TRANSITIONS[window.status]:
             await self.db.rollback()
             raise RecordingError("Window progress cannot move backwards or reopen terminal work", 409)
@@ -300,11 +304,29 @@ class AutomationStore:
 
     async def list_windows(self, user_id: str, channel_id: str, limit: int = 50, offset: int = 0) -> dict:
         await self._channel(channel_id, user_id)
-        scoped = RecordingWindow.channel_id == channel_id
+        scoped = (RecordingWindow.channel_id == channel_id) & visible_history()
         total = (await self.db.execute(select(func.count()).select_from(RecordingWindow).where(scoped))).scalar_one()
         rows = (await self.db.execute(select(RecordingWindow).where(scoped).order_by(RecordingWindow.created_at.desc(), RecordingWindow.id.desc()).limit(limit).offset(offset))).scalars().all()
         await self.db.commit()
         return {"windows": list(rows), "total": total}
+
+    async def clear_history(self, user_id: str, channel_id: str, scope: Literal["failed", "finished"] = "finished") -> dict:
+        """Hide terminal history without deleting media or replay-prevention rows."""
+        if scope not in {"failed", "finished"}:
+            raise RecordingError("Unknown history scope", 422)
+        await self._channel(channel_id, user_id, lock=True)
+        statuses = ["blocked"] if scope == "failed" else ["blocked", "completed"]
+        rows = (await self.db.execute(select(RecordingWindow).where(
+            RecordingWindow.channel_id == channel_id, RecordingWindow.status.in_(statuses), visible_history(),
+        ).with_for_update().execution_options(populate_existing=True))).scalars().all()
+        now = await self._now()
+        for window in rows:
+            window.details = {**window.details, "history_cleared": True,
+                "history_cleared_at": now.isoformat(), "history_cleared_reason": "owner_cleared"}
+            window.next_attempt_at = None
+            window.updated_at = now
+        await self.db.commit()
+        return {"cleared": len(rows)}
 
     async def mark_publication_capped(self, token: Lease, window_id: str) -> RecordingWindow:
         """Stop new automatic posts while retaining every committed receipt.
@@ -321,6 +343,9 @@ class AutomationStore:
         if window is None:
             await self.db.rollback()
             raise RecordingError("Window not found", 404)
+        if window.details.get("history_cleared") is True:
+            await self.db.rollback()
+            raise WindowClearedError()
         if window.status != "publishing":
             await self.db.rollback()
             raise RecordingError("Only publishing work can reach the publication limit", 409)
@@ -339,6 +364,9 @@ class AutomationStore:
         if window is None:
             await self.db.rollback()
             raise RecordingError("Window not found", 404)
+        if window.details.get("history_cleared") is True:
+            await self.db.rollback()
+            raise WindowClearedError()
         if window.status != "blocked":
             await self.db.rollback()
             raise RecordingError("Only blocked work can be retried", 409)

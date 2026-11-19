@@ -15,7 +15,8 @@ function allowed(method: string, path: string[]) {
     if (path.length === 1) return method === "GET" || method === "POST";
     if (path.length === 2) return method === "GET" || method === "PATCH";
     if (path.length === 3 && path[2] === "automation") return method === "GET" || method === "PUT";
-    if (path.length === 3 && ["sessions", "windows"].includes(path[2])) return method === "GET";
+    if (path.length === 3 && path[2] === "windows") return method === "GET" || method === "DELETE";
+    if (path.length === 3 && path[2] === "sessions") return method === "GET";
     if (path.length === 5 && path[2] === "windows" && path[4] === "retry") return method === "POST";
   }
   return path[0] === "sessions" && path.length === 2 && method === "GET";
@@ -49,3 +50,4 @@ export const GET = proxy;
 export const POST = proxy;
 export const PUT = proxy;
 export const PATCH = proxy;
+export const DELETE = proxy;

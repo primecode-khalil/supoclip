@@ -1,4 +1,5 @@
 """Owner-scoped policy and progress endpoints; subprocesses live in the supervisor."""
+from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,6 +37,11 @@ async def configure_automation(channel_id: str, policy: AutomationPolicy, user_i
 @router.get("/channels/{channel_id}/windows", response_model=WindowList)
 async def list_windows(channel_id: str, user_id: str = Depends(_owner), limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0), db: AsyncSession = Depends(get_db)):
     return await _call(AutomationStore(db).list_windows(user_id, channel_id, limit, offset))
+
+
+@router.delete("/channels/{channel_id}/windows")
+async def clear_history(channel_id: str, scope: Literal["failed", "finished"] = Query("finished"), user_id: str = Depends(_owner), db: AsyncSession = Depends(get_db)):
+    return await _call(AutomationStore(db).clear_history(user_id, channel_id, scope))
 
 
 @router.post("/channels/{channel_id}/windows/{window_id}/retry", response_model=WindowResponse)

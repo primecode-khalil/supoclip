@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import type { SocialConnection } from "@/lib/social";
 import { PolicyForm } from "./policy-form";
 import { useChannelStatus } from "./use-channel-status";
-import { WindowActivity } from "./window-activity";
+import { WindowActivity, type ClearHistoryScope } from "./window-activity";
 import { dateTime, publicationError, recordingJSON, type AutomationPolicy, type AutomationState, type RecordingChannel } from "./types";
 
 export function ChannelDetail({ channel, connections, connectionError }: { channel: RecordingChannel; connections: SocialConnection[]; connectionError: string | null }) {
@@ -35,6 +35,11 @@ export function ChannelDetail({ channel, connections, connectionError }: { chann
     await recordingJSON(`/api/recording/channels/${encodeURIComponent(channel.id)}/windows/${encodeURIComponent(windowId)}/retry`, { method: "POST" });
     refresh();
   }
+  async function clearHistory(scope: ClearHistoryScope) {
+    const result = await recordingJSON<{ cleared: number }>(`/api/recording/channels/${encodeURIComponent(channel.id)}/windows?scope=${scope}`, { method: "DELETE" });
+    refresh();
+    return result.cleared;
+  }
   const enabled = automation?.policy.enabled && channel.enabled;
   // Lease validity is computed with the database clock by the API.
   const alive = automation?.runtime.leased;
@@ -54,7 +59,7 @@ export function ChannelDetail({ channel, connections, connectionError }: { chann
     </div>
     <div className="space-y-6 p-4 sm:p-6">
       {automation && <PolicyForm policy={automation.policy} connections={connections} connectionError={connectionError} onSave={save} />}
-      <WindowActivity data={windows} error={errors.windows} onRetry={retry} />
+      <WindowActivity data={windows} error={errors.windows} onRetry={retry} onClear={clearHistory} />
       <section className="border-t pt-6"><h3 className="mb-3 text-sm font-semibold">Recent recording sessions</h3>{errors.sessions && <p role="status" className="mb-2 text-xs text-destructive">{errors.sessions}</p>}{!sessions ? <Skeleton className="h-12 w-full" /> : !sessions.sessions.length ? <p className="text-xs text-muted-foreground">No recording sessions yet.</p> : <ul className="space-y-2">{sessions.sessions.map((session) => <li key={session.id} className="flex flex-wrap items-center justify-between gap-2 text-xs"><span className="text-muted-foreground">{dateTime(session.started_at || session.created_at)}</span><Badge variant="outline">{session.status}</Badge></li>)}</ul>}</section>
       <p className="text-xs text-muted-foreground">{updatedAt ? `Last refreshed ${updatedAt.toLocaleTimeString()}. Updates every 8 seconds while this tab is visible.` : "Waiting for a complete status update."}</p>
     </div>

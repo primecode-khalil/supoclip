@@ -141,3 +141,49 @@ test("signed-out visitors do not request recording data", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Sign in to manage live channels" })).toBeVisible();
   expect(requests).toBe(0);
 });
+
+for (const width of [1280, 320]) {
+  test(`clears failed and finished history while retaining active work at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    let windows = [
+      { id: "failed", sequence: 0, status: "blocked", task_id: null, last_error: "The bound task was deleted; automatic recreation is disabled" },
+      { id: "completed", sequence: 1, status: "completed", task_id: null, last_error: null },
+      { id: "active", sequence: 2, status: "pending", task_id: null, last_error: null },
+    ].map((item) => ({ ...item, session_id: "demo-session", epoch: "demo-epoch", start_seconds: 0, end_seconds: 600, attempts: 0, next_attempt_at: null, created_at: "2026-11-19T10:00:00Z" }));
+    const scopes: string[] = [];
+    await page.route("**/api/recording/channels/*/windows?*", async (route) => {
+      if (route.request().method() === "DELETE") {
+        const scope = new URL(route.request().url()).searchParams.get("scope")!;
+        scopes.push(scope);
+        const before = windows.length;
+        windows = windows.filter((item) => item.status !== "blocked" && (scope !== "finished" || item.status !== "completed"));
+        return route.fulfill({ json: { cleared: before - windows.length } });
+      }
+      return route.fulfill({ json: { windows, total: windows.length } });
+    });
+    await page.goto("/recording");
+    const activity = page.locator('section[aria-labelledby="recording-activity"]');
+    await expect(activity.getByText("3 total")).toBeVisible();
+    await activity.scrollIntoViewIfNeeded();
+    if (process.env.RECORDING_HISTORY_PROOF_DIR) await page.screenshot({ path: `${process.env.RECORDING_HISTORY_PROOF_DIR}/before-${width}.png` });
+    await activity.getByRole("button", { name: "Clear failed", exact: true }).click();
+    await expect(page.getByRole("alertdialog")).toContainText("Captured recordings, library clips, and published posts are kept.");
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    expect(scopes).toEqual([]);
+    await activity.getByRole("button", { name: "Clear failed", exact: true }).click();
+    await page.getByRole("alertdialog").evaluate((element) => Promise.all(element.getAnimations().map((animation) => animation.finished)));
+    await expect(page.getByRole("alertdialog")).toBeInViewport({ ratio: 1 });
+    if (process.env.RECORDING_HISTORY_PROOF_DIR) await page.screenshot({ path: `${process.env.RECORDING_HISTORY_PROOF_DIR}/confirm-${width}.png` });
+    await page.getByRole("button", { name: "Clear history", exact: true }).click();
+    await expect(activity.getByText("2 total")).toBeVisible();
+    await expect(activity.getByText("Window 1", { exact: false })).toHaveCount(0);
+    await activity.getByRole("button", { name: "Clear all finished", exact: true }).click();
+    await expect(page.getByRole("alertdialog")).toContainText("Active work continues.");
+    await page.getByRole("button", { name: "Clear history", exact: true }).click();
+    await expect(activity.getByText("1 total")).toBeVisible();
+    await expect(activity.getByText("Waiting", { exact: true })).toBeVisible();
+    expect(scopes).toEqual(["failed", "finished"]);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    if (process.env.RECORDING_HISTORY_PROOF_DIR) await page.screenshot({ path: `${process.env.RECORDING_HISTORY_PROOF_DIR}/after-${width}.png` });
+  });
+}

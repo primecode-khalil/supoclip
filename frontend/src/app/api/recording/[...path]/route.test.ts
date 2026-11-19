@@ -1,4 +1,4 @@
-import { GET, POST, PUT } from "./route";
+import { GET, POST, PUT, DELETE } from "./route";
 import { fetchBackend } from "@/server/backend-api";
 import { getServerSession } from "@/server/session";
 
@@ -97,5 +97,15 @@ it("keeps request size limits for home connection setup", async () => {
   vi.mocked(getServerSession).mockResolvedValue({ user: { id: "owner", is_admin: true } } as never);
   const response = await POST(new Request("http://localhost/api/recording/home-proxy/setup", { method: "POST", body: "x".repeat(32_769) }), context(["home-proxy", "setup"]));
   expect(response.status).toBe(413);
+  expect(fetchBackend).not.toHaveBeenCalled();
+});
+
+
+it("forwards owner-scoped history clearing and rejects unrelated DELETE routes", async () => {
+  const response = await DELETE(new Request("http://localhost/api/recording/channels/one/windows?scope=failed", { method: "DELETE" }), context(["channels", "one", "windows"]));
+  expect(response.status).toBe(200);
+  expect(fetchBackend).toHaveBeenCalledWith("/recording/channels/one/windows?scope=failed", expect.objectContaining({ method: "DELETE", userId: "owner" }));
+  vi.mocked(fetchBackend).mockClear();
+  expect((await DELETE(new Request("http://localhost/api/recording/channels/one", { method: "DELETE" }), context(["channels", "one"]))).status).toBe(404);
   expect(fetchBackend).not.toHaveBeenCalled();
 });
