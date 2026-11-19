@@ -237,6 +237,7 @@ export interface ReviewItem {
   version: string;
   title: string;
   caption: string;
+  youtube_tags: string[];
   score: number | null;
   duration: number | null;
   source_title: string | null;

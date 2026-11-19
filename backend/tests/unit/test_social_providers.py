@@ -163,7 +163,8 @@ def test_youtube_publish_uses_resumable_upload(clip_file):
     assert put_call[2]["headers"]["Authorization"] == "Bearer token"
     body = init_call[2]["json"]
     assert body["status"]["privacyStatus"] == "unlisted"
-    assert "#Shorts" in body["snippet"]["description"]
+    assert body["snippet"]["description"] == "Caption\n\n#podcast"
+    assert body["snippet"]["tags"] == ["podcast"]
     assert body["snippet"]["title"] == "My clip"
     assert init_call[2]["headers"]["X-Upload-Content-Length"] == "1024"
 

@@ -1,10 +1,32 @@
 # Review and schedule YouTube Shorts
 
 Open **Publishing** in the dashboard. Watch one finished, captioned vertical clip
-at a time, edit its title/description, then choose **Approve & schedule**, **Reject**,
+at a time, edit its title, description and tags, then choose **Approve & schedule**, **Reject**,
 or **Later**. Approval authorizes a future public YouTube publication. Rejection
 keeps the video in your library; Undo returns it to review. Later changes only the
 local review order. A/R shortcuts work outside text fields.
+
+## Accurate tags
+
+New AI analyses suggest 3–6 specific keywords in the clip's language, with a hard
+cap of eight. This uses the existing configured model response (Gemini when that
+is your selected provider), without another AI request. Highlights, Series,
+Topic, Recap and Trailer all carry suggestions into the finished clip. Suggestions
+are checked against the final rendered transcript, so guessed names or terms from
+discarded footage are dropped. The conservative check can leave fewer tags or none;
+it does not identify people or games from pictures alone.
+
+Edit the comma-separated **YouTube tags** before approval, including accurate
+context you know yourself. Clear the field to upload without tags. Tags are
+deduplicated, limited to 60 characters each and YouTube's 500-character total,
+and sent as `snippet.tags`, separately from description hashtags. There is no
+automatic `viral`, `fyp` or `Shorts` tag. Approved tags are frozen with the post
+and its resumable upload; retries or later clip edits do not replace them.
+
+Older clips and reused cached analyses may have no suggestions. Enter tags
+manually; the app does not spend quota retranscribing or regenerating them.
+YouTube says tags play a small role in discovery compared with the title,
+thumbnail and description: [YouTube's tag guidance](https://support.google.com/youtube/answer/146402).
 
 ## Connect once
 

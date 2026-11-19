@@ -568,6 +568,15 @@ class SocialService:
         clean_caption = (caption if caption is not None else (clip.get("text") or "")).strip()
         clean_caption = clean_caption[:MAX_CAPTION_LENGTH]
         clean_hashtags = normalize_hashtags(hashtags)
+        if provider.name == "youtube":
+            from ..publishing_tags import ground_youtube_tags, normalize_youtube_tags
+
+            provider_options = dict(provider_options or {})
+            if "youtube_tags" in provider_options:
+                provider_options["youtube_tags"] = normalize_youtube_tags(provider_options["youtube_tags"])
+            elif "youtube_tags" in (clip.get("workflow_meta") or {}):
+                provider_options["youtube_tags"] = ground_youtube_tags(
+                    clip["workflow_meta"]["youtube_tags"], clip.get("text") or "")
 
         when = _parse_schedule(scheduled_for)
         now = datetime.now(timezone.utc)

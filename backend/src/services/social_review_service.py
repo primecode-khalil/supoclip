@@ -3,11 +3,13 @@ from __future__ import annotations
 
 from pathlib import Path
 from datetime import datetime, timezone
+from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 
 from ..media_storage import media_work, is_s3
+from ..publishing_tags import ground_youtube_tags, normalize_youtube_tags
 from ..repositories.social_publication_policy_repository import SocialPublicationPolicyRepository as Policies
 from ..repositories.social_review_repository import SocialReviewRepository as Reviews, render_version
 from ..utils.async_helpers import run_in_thread
@@ -40,6 +42,7 @@ class ReviewApproval(BaseModel):
     title: str | None = Field(default=None, max_length=100)
     caption: str | None = Field(default=None, max_length=2200)
     hashtags: list[str] | None = Field(default=None, max_length=30)
+    youtube_tags: list[Annotated[str, Field(max_length=60)]] | None = Field(default=None, max_length=8)
     custom_local: str | None = Field(default=None, max_length=32)
 
 
@@ -200,7 +203,9 @@ class SocialReviewService:
                 slot = await Policies.reserve(self.db, identity, now, custom_local=body.custom_local, commit=False)
             except ValueError as exc:
                 raise SocialValidationError(str(exc)) from None
-            options = {"native_schedule": True, "category_id": policy.category_id,
+            tags = normalize_youtube_tags(body.youtube_tags) if body.youtube_tags is not None else ground_youtube_tags(
+                (fresh.get("workflow_meta") or {}).get("youtube_tags"), fresh.get("caption") or "")
+            options = {"native_schedule": True, "category_id": policy.category_id, "youtube_tags": tags,
                 "made_for_kids": policy.made_for_kids, "contains_synthetic_media": policy.contains_synthetic_media,
                 "approved_pattern": {"schedule": policy.schedule.model_dump(mode="json"), "timezone": policy.timezone},
                 "review": {"id": identity, "origin_clip_id": row["clip_id"], "version": body.expected_version, "sha256": digest, "size_bytes": size, "automatic": automatic}}

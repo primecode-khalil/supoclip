@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import time
 from collections import OrderedDict
@@ -53,6 +54,9 @@ def model_name(*, structural: bool) -> str:
 
 def build_agent(output_type: type[T], system_prompt: str, *, structural: bool) -> Agent:
     """An agent for one planner pass, cached by schema, prompt, model and keys."""
+    if '"youtube_tags"' in json.dumps(output_type.model_json_schema()):
+        from ..publishing_tags import YOUTUBE_TAG_INSTRUCTIONS
+        system_prompt += "\n\n" + YOUTUBE_TAG_INSTRUCTIONS
     cfg = get_config()
     name = model_name(structural=structural)
     signature = (

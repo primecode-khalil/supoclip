@@ -126,6 +126,7 @@ class _Copy:
     ends_on: str = ""
     post_caption: str = ""
     best_line: int = -1
+    youtube_tags: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -1306,6 +1307,7 @@ def _apply_retitle(copy: SeriesCopy, copies: list[_Copy]) -> tuple[list[_Copy], 
                 _clean(entry.ends_on),
                 _clean(entry.post_caption) or old.post_caption,
                 old.best_line,
+                entry.youtube_tags,
             )
     return updated, _clean_title(copy.series_title)
 
@@ -1686,6 +1688,7 @@ def _segments(
                     "delivers": copy.delivers,
                     "ends_on": copy.ends_on,
                     "post_caption": copy.post_caption,
+                    "youtube_tags": copy.youtube_tags,
                     "first_unit": first,
                     "last_unit": last,
                     **extra_meta,

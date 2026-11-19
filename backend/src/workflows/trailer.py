@@ -791,7 +791,7 @@ async def plan_trailer(pi: PlanInput) -> tuple[list[dict[str, Any]], dict[str, A
 
     if pi.index.coarse:
         pi.note("COARSE_TRANSCRIPT")
-    segments, plan = _segments(pi, clauses, cut, title or "", budget)
+    segments, plan = _segments(pi, clauses, cut, title or "", budget, drafter.current.youtube_tags if drafter.current else [])
     played = {uid for beat in cut.beats for uid in range(beat.first, beat.last + 1)}
     if drafter.reclaimed & played:
         # The eval's spoiler check reads these: clauses set free on purpose, and only these.
@@ -1106,7 +1106,7 @@ async def _taste_gate(
 
 
 def _segments(
-    pi: PlanInput, clauses: UnitIndex, cut: TrailerCut, title: str, budget: Budget
+    pi: PlanInput, clauses: UnitIndex, cut: TrailerCut, title: str, budget: Budget, youtube_tags: list[str] | None = None
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     ranges: list[tuple[float, float]] = []
     meta_beats: list[dict[str, Any]] = []
@@ -1127,7 +1127,7 @@ def _segments(
         hook_title=compose_title(title),
         reasoning=pi.outline.outline.central_question,
         workflow_role="trailer",
-        meta={"beats": meta_beats},
+        meta={"beats": meta_beats, "youtube_tags": youtube_tags or []},
     )
     plan = base_plan(pi, title=title)
     plan["beats"] = plan_beats

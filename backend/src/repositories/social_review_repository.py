@@ -5,11 +5,13 @@ import hashlib
 from uuid import uuid4
 
 from sqlalchemy import text
+from ..publishing_tags import ground_youtube_tags, normalize_youtube_tags
 
 _SELECT = """
     SELECT r.*,c.file_path AS current_file_path,c.updated_at AS clip_updated_at,
         c.created_at AS clip_created_at,c.hook_title,c.text AS caption,c.virality_score,
-        c.duration,s.title AS source_title,p.status AS post_status,p.scheduled_for,
+        c.duration,c.workflow_meta,s.title AS source_title,p.status AS post_status,p.scheduled_for,
+        p.provider_options AS post_options,
         p.external_url,slot.publish_at
     FROM social_review_items r
     LEFT JOIN generated_clips c ON c.id=r.clip_id
@@ -70,11 +72,14 @@ class SocialReviewRepository:
     def present(row: dict) -> dict:
         current = row.get("current_file_path")
         version = render_version(row["clip_id"], current, row.get("clip_updated_at")) if current and row.get("clip_id") else row["render_version"]
+        options = row.get("post_options") or {}
+        tags = normalize_youtube_tags(options["youtube_tags"]) if "youtube_tags" in options else ground_youtube_tags(
+            (row.get("workflow_meta") or {}).get("youtube_tags"), row.get("caption") or "")
         return {
             "id": row["id"], "account_id": row["account_id"], "task_id": row.get("task_id"), "clip_id": row.get("clip_id"),
             "status": row["status"], "post_id": row.get("post_id"), "post_status": row.get("post_status"),
             "version": version, "title": row.get("hook_title") or row.get("source_title") or "Untitled clip",
-            "caption": row.get("caption") or "", "score": row.get("virality_score"), "duration": row.get("duration"),
+            "caption": row.get("caption") or "", "youtube_tags": tags, "score": row.get("virality_score"), "duration": row.get("duration"),
             "source_title": row.get("source_title"), "external_url": row.get("external_url"),
             "publish_at": row["publish_at"].isoformat() if row.get("publish_at") else None,
             "video_url": f"/api/tasks/{row['task_id']}/clips/{row['clip_id']}/file?v={version}" if current and row.get("task_id") else None,

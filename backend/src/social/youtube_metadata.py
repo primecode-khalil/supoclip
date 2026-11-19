@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 
 from .base import PublishRequest, SocialProviderError
+from ..publishing_tags import normalize_youtube_tags
 
 
 def _clean(value: str) -> str:
@@ -19,22 +20,20 @@ def build_youtube_metadata(request: PublishRequest) -> dict:
     disclosure = options.get("contains_synthetic_media")
     if type(audience) is not bool or (disclosure is not None and type(disclosure) is not bool):
         raise SocialProviderError("YouTube audience and disclosure must be explicit yes/no choices.")
-    tags, used = [], 0
-    for raw in [*request.hashtags, "Shorts"]:
-        tag = _clean(str(raw)).lstrip("#").strip()
-        if not tag or any(tag.lower() == old.lower() for old in tags):
+    tags = normalize_youtube_tags(options.get("youtube_tags", request.hashtags))
+    hashtags = []
+    for raw in request.hashtags:
+        tag = re.sub(r"\s+", "", _clean(str(raw)).lstrip("#"))
+        if not tag or any(tag.casefold() == old.casefold() for old in hashtags):
             continue
-        cost = len(tag) + (2 if " " in tag else 0) + bool(tags)
-        if used + cost <= 500 and len(tags) < 30:
-            tags.append(tag)
-            used += cost
-    hashtag_text = " ".join("#" + re.sub(r"\s+", "", tag) for tag in tags)
-    if not any(tag.lower() == "shorts" for tag in tags):
-        hashtag_text += " #Shorts"
+        candidate = " ".join("#" + item for item in [*hashtags, tag])
+        if len(candidate.encode("utf-8")) <= 4998:
+            hashtags.append(tag)
+    hashtag_text = " ".join("#" + tag for tag in hashtags)
     caption = _clean(request.caption or "")
-    room = 5000 - len(hashtag_text.encode("utf-8")) - (2 if caption else 0)
+    room = 5000 - len(hashtag_text.encode("utf-8")) - (2 if caption and hashtag_text else 0)
     caption = caption.encode("utf-8")[:max(0, room)].decode("utf-8", errors="ignore").rstrip()
-    description = f"{caption}\n\n{hashtag_text}" if caption else hashtag_text
+    description = "\n\n".join(part for part in (caption, hashtag_text) if part)
     status = {
         "privacyStatus": request.privacy_level if request.privacy_level in ("private", "public", "unlisted") else "private",
         "selfDeclaredMadeForKids": audience,

@@ -23,6 +23,7 @@ from ..video_utils import VALID_OUTPUT_FORMATS, parse_timestamp_to_seconds, crea
 from ..stream_transfer import run_stream_download
 from ..utils.async_helpers import run_in_thread
 from ..clip_duration import clip_duration, normalize_clip_length
+from ..publishing_tags import ground_youtube_tags
 from ..media.common import MAX_RENDERED_CLIP_SECONDS
 from ..clip_cleanup import normalize_clip_cleanup_settings
 from ..broll import broll_overlays_for, shift_broll_placements
@@ -420,6 +421,11 @@ class ClipEditingMixin:
                     "part_number": segment.get("part_number"),
                     "workflow_meta": meta,
                 }
+            suggested_tags = segment.get("youtube_tags", (segment.get("workflow_meta") or {}).get("youtube_tags"))
+            if suggested_tags is not None:
+                meta = copy.deepcopy(workflow_fields.get("workflow_meta") or {})
+                meta["youtube_tags"] = ground_youtube_tags(suggested_tags, clip_info.get("text") or "")
+                workflow_fields["workflow_meta"] = meta
             clip_id = await self.clip_repo.create_clip(
                 self.db,
                 task_id=task_id,

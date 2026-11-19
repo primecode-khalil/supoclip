@@ -25,7 +25,7 @@ def test_description_is_bounded_in_utf8_bytes(tmp_path):
     description = result["snippet"]["description"]
     assert len(description.encode("utf-8")) <= 5000
     assert "�" not in description
-    assert description.endswith("#Shorts")
+    assert "#Shorts" not in description
 
 
 def test_upload_uses_selected_audience_category_and_disclosure(tmp_path):
@@ -37,7 +37,7 @@ def test_upload_uses_selected_audience_category_and_disclosure(tmp_path):
 def test_metadata_fallback_and_title_are_safe(tmp_path):
     result = metadata(tmp_path, title="<>" + "🎥" * 110, caption="")
     assert result["snippet"]["title"] == "🎥" * 100
-    assert result["snippet"]["description"] == "#Shorts"
+    assert result["snippet"]["description"] == ""
     assert result["status"]["privacyStatus"] == "private"
     assert metadata(tmp_path, title="  ")["snippet"]["title"] == "Untitled clip"
 
@@ -49,9 +49,23 @@ def test_native_schedule_upload_is_private_until_processing_is_verified(tmp_path
 
 
 def test_tag_budget_accounts_for_spaces_and_separators(tmp_path):
-    result = metadata(tmp_path, tags=["a long tag " + "x" * 100 + str(n) for n in range(30)])
+    result = metadata(tmp_path, options={"youtube_tags": ["a long tag " + "x" * 48 + str(n) for n in range(8)]})
     tags = result["snippet"]["tags"]
+    assert len(tags) == 7  # Eight 60-character phrases plus quote/comma overhead exceed 500.
     assert sum(len(tag) + (2 if " " in tag else 0) for tag in tags) + max(0, len(tags) - 1) <= 500
+
+
+def test_content_tags_are_separate_from_owner_hashtags(tmp_path):
+    result = metadata(tmp_path, options={"youtube_tags": ["GTA6", "Vice City", "vice city"]}, tags=["MySeries"])
+    assert result["snippet"]["tags"] == ["GTA6", "Vice City"]
+    assert result["snippet"]["description"] == "A complete thought\n\n#MySeries"
+
+
+def test_explicit_empty_tags_do_not_reappear_as_generic_or_hashtag_tags(tmp_path):
+    assert metadata(tmp_path, options={"youtube_tags": []}, tags=["MySeries"])["snippet"]["tags"] == []
+    result = metadata(tmp_path)
+    assert result["snippet"]["tags"] == []
+    assert result["snippet"]["description"] == "A complete thought"
 
 
 @pytest.mark.parametrize("options", [{"made_for_kids": "false"}, {"category_id": "bad"}, {"contains_synthetic_media": "true"}])

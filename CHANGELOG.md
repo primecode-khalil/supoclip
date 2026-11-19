@@ -4,6 +4,10 @@ What changed in SupoClip for people using the product. Newest dates are first.
 
 Add a line here when a pull request changes something a user can see. Use **New**, **Improved**, **Fixed**, or **Under the hood**, describe the change in plain language, and link the pull request. Skip internal-only work, or fold it into one **Under the hood** line. Do not include customer names, email addresses, user IDs, or anything else private.
 
+## 2026-11-20
+
+- **Improved:** New clips get a small set of AI-suggested YouTube tags checked against their final transcript. Edit or clear tags before approving a Short; approved tags stay attached to its upload through retries. Tags stay separate from description hashtags. Older clips can be tagged manually without paying to regenerate them. ([#2](https://github.com/primecode-khalil/supoclip/pull/2))
+
 ## 2026-11-19
 
 - **New:** Review captioned vertical clips one at a time, approve or reject them, and schedule approved YouTube Shorts every six hours or on your own posting pattern. Private uploads, processing checks, recovery and verified cancellation keep the queue truthful. Rejected clips stay in your library. Deleting a library source warns about linked YouTube uploads and removes those copies after confirmation. ([#2](https://github.com/primecode-khalil/supoclip/pull/2))

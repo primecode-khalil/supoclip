@@ -26,7 +26,7 @@ for (const width of [1440, 320]) {
     const account = { id: "demo-channel", provider: "youtube", display_name: "Demo Creator", status: "active" };
     let settings = { policy: { mode: "review", enabled: true, uploads_paused: false, timezone: "UTC", min_score: 75, category_id: "22", made_for_kids: false, contains_synthetic_media: null,
       schedule: { kind: "interval", interval_minutes: 360, anchor_at: "2026-12-01T12:00:00Z", weekdays: [0,1,2,3,4,5,6], times: ["09:00", "15:00"] } }, next_slot: "2026-12-01T12:00:00Z", pending_review: 2, permissions_complete: true, private_test_completed: false, legacy: false };
-    const clips = ["one", "two"].map((id, i) => ({ id, account_id: account.id, task_id: "demo-source", clip_id: id, version: "a".repeat(64), status: "pending", title: i ? "A moment worth keeping" : "Small steps make great stories", caption: "A complete thought, ready for the next story. #Shorts", score: 91-i, duration: 4, source_title: "Demo recording · captioned vertical clip", video_url: `/api/demo-video/${id}` }));
+    const clips = ["one", "two"].map((id, i) => ({ id, account_id: account.id, task_id: "demo-source", clip_id: id, version: "a".repeat(64), status: "pending", title: i ? "A moment worth keeping" : "Small steps make great stories", caption: "A complete thought, ready for the next story.", youtube_tags: ["small steps", "great stories"], score: 91-i, duration: 4, source_title: "Demo recording · captioned vertical clip", video_url: `/api/demo-video/${id}` }));
     let pending = [...clips];
     let rejected: typeof clips = [];
     let posts: Record<string, unknown>[] = [];
@@ -44,6 +44,7 @@ for (const width of [1440, 320]) {
       approvals++;
       const body = route.request().postDataJSON();
       expect(body.expected_version).toBe("a".repeat(64));
+      expect(body.youtube_tags).toEqual(["small steps", "great stories", "storytelling"]);
       const item = pending.shift()!;
       const post = { id: "demo-post", title: body.title, caption: body.caption, social_account_id: account.id, provider: "youtube", status: "scheduled", stage: "youtube_scheduled", scheduled_for: settings.next_slot, actual_visibility: "private", external_url: "https://www.youtube.com/shorts/demo", provider_options: { native_schedule: true }, account: { display_name: account.display_name } };
       posts = [post]; settings = { ...settings, next_slot: "2026-12-01T18:00:00Z" };
@@ -56,10 +57,13 @@ for (const width of [1440, 320]) {
     await page.goto("/publishing");
     const title = page.getByLabel("Title", { exact: true });
     await expect(title).toHaveValue(clips[0].title);
+    const tags = page.getByLabel("YouTube tags", { exact: true });
+    await expect(tags).toHaveValue("small steps, great stories");
     await page.getByLabel("Clip preview").evaluate(async element => { await (element as HTMLVideoElement).play(); });
     await expect.poll(() => page.getByLabel("Clip preview").evaluate(element => (element as HTMLVideoElement).currentTime)).toBeGreaterThan(0.2);
     await page.screenshot({ path: `test-results/shorts-review-${width}.png`, fullPage: true });
     await title.fill("Small steps, great stories");
+    await tags.fill("small steps, great stories, storytelling");
     await title.press("r");
     expect(rejected).toHaveLength(0);
     await page.getByRole("button", { name: "Approve & schedule", exact: true }).click();

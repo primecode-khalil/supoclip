@@ -41,7 +41,7 @@ def _point(first, last, core, importance=1, label="A point"):
 
 
 def _draft(points=None, opener=(2, 2), closer=(110, 111)):
-    return RecapDraft(
+    return RecapDraft(youtube_tags=[],
         editorial_notes="", spine="", title="How the company was saved",
         opener=UnitSpan(first_unit=opener[0], last_unit=opener[1]) if opener else NONE,
         opener_answered_by=0,
@@ -70,13 +70,16 @@ def _setup(monkeypatch, answers, *, mode="full", outline_points=None, sentences=
 
 @pytest.mark.asyncio
 async def test_recap_is_one_locked_segment_inside_its_window(monkeypatch):
-    pi, model = _setup(monkeypatch, {"RecapDraft": [_draft()], "RecapFinalCut": _same_cut})
+    draft = _draft()
+    draft.youtube_tags = ["company", "Minecraft"]
+    pi, model = _setup(monkeypatch, {"RecapDraft": [draft], "RecapFinalCut": _same_cut})
 
     segments, plan = await plan_recap(pi)
 
     assert model.schemas() == ["RecapDraft", "RecapFinalCut"]
     assert len(segments) == 1
     segment = segments[0]
+    assert segment["workflow_meta"]["youtube_tags"] == ["company"]
     budget = recap_budget("auto", pi.ctx.source_seconds)
     assert budget.min <= plan["seconds"] <= budget.max
     assert segment["planned"] and segment["required"] and segment["workflow_role"] == "recap"

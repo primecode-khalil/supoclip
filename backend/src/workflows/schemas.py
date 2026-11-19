@@ -185,6 +185,7 @@ class PartCopy(BaseModel):
     delivers: str
     ends_on: str
     post_caption: str
+    youtube_tags: list[str] = Field(description="Up to 8 specific keywords said in this part, [] when uncertain")
 
 
 class SeriesCopy(BaseModel):
@@ -227,6 +228,7 @@ class TopicMoment(BaseModel):
     value_score: int = Field(description="0-25")
     shareability_score: int = Field(description="0-25")
     why: str = Field(description="At most 20 words: what it says about the topic")
+    youtube_tags: list[str] = Field(description="Up to 8 specific keywords said in this moment, [] when uncertain")
 
 
 class TopicExtraction(BaseModel):
@@ -284,6 +286,7 @@ class RecapDraft(BaseModel):
     opener_answered_by: int = Field(description="1-based point that answers the opener, 0 when none")
     points: list[RecapPoint] = Field(description="In video order")
     closer: UnitSpan = Field(description="Lands the takeaway; -1/-1 when the last point already concludes")
+    youtube_tags: list[str] = Field(description="Up to 8 specific keywords said in the selected recap beats, [] when uncertain")
 
 
 class RecapFinalBeat(BaseModel):
@@ -330,6 +333,7 @@ class TrailerDraft(BaseModel):
     beats: list[TrailerBeat] = Field(description="Play order, 4-6 beats")
     stranger_read: str = Field(description="At most 60 words: the beats as a stranger hears them; what gets lost?")
     title_candidates: list[str] = Field(description="Written last: exactly 3 titles, 3-8 words, every noun heard in the beats")
+    youtube_tags: list[str] = Field(description="Up to 8 specific keywords said in the selected trailer beats, [] when uncertain")
 
 
 class TrailerTitles(BaseModel):

@@ -139,6 +139,8 @@ def planned_segment(
     hook_type: Optional[str] = None,
 ) -> dict[str, Any]:
     """A locked PlannedSegment (§2.3): the renderer plays exactly these ranges."""
+    from ..publishing_tags import ground_youtube_tags
+    meta = {**meta, "youtube_tags": ground_youtube_tags(meta.get("youtube_tags"), text)}
     source_ranges = rounded_ranges(ranges)
     fades = [round(float(fade), 3) for fade in junction_fades]
     if len(fades) != max(0, len(source_ranges) - 1):

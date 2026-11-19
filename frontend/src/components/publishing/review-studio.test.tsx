@@ -5,7 +5,7 @@ import { ReviewStudio } from "./review-studio";
 const account = { id: "account", display_name: "Demo channel", provider: "youtube", status: "active" } as const;
 const policy = { mode: "review", enabled: true, uploads_paused: false, timezone: "UTC", min_score: 75, category_id: "22", made_for_kids: false, schedule: { kind: "interval", interval_minutes: 360, anchor_at: "2026-12-01T12:00:00Z", weekdays: [0,1,2,3,4,5,6], times: ["09:00"] } };
 const settings = { policy, next_slot: "2026-12-01T12:00:00Z", permissions_complete: true, private_test_completed: false, legacy: false, pending_review: 2 };
-const clips = ["one", "two"].map(id => ({ id, account_id: "account", title: `Clip ${id}`, caption: `Description ${id}`, source_title: "Demo source", score: 91, version: "a".repeat(64), video_url: `/demo-${id}.mp4`, status: "pending" }));
+const clips = ["one", "two"].map(id => ({ id, account_id: "account", title: `Clip ${id}`, caption: `Description ${id}`, youtube_tags: ["GTA 6", "Vice City"], source_title: "Demo source", score: 91, version: "a".repeat(64), video_url: `/demo-${id}.mp4`, status: "pending" }));
 
 afterEach(() => { vi.unstubAllGlobals(); });
 function setup(fail = false, delayed = false) {
@@ -54,6 +54,33 @@ it("ignores shortcuts while editing, then rejects with R and restores with Undo"
   await waitFor(() => expect(screen.getByLabelText("Title")).toHaveValue("Clip two"));
   fireEvent.click(screen.getByRole("button", { name: /undo rejection/i }));
   await waitFor(() => expect(screen.getByLabelText("Title")).toHaveValue("Clip one"));
+});
+
+it("shows generated tags, saves owner edits and allows clearing them", async () => {
+  const { fetcher } = setup();
+  const tags = await screen.findByLabelText("YouTube tags");
+  expect(tags).toHaveValue("GTA 6, Vice City");
+  fireEvent.change(tags, { target: { value: "GTA 6, vice city, GTA 6, car chase" } });
+  fireEvent.click(screen.getByRole("button", { name: /approve & schedule/i }));
+  await waitFor(() => expect(screen.getByLabelText("Title")).toHaveValue("Clip two"));
+  const first = fetcher.mock.calls.find(([url]) => url.includes("/approve"))![1];
+  expect(JSON.parse(first!.body as string).youtube_tags).toEqual(["GTA 6", "vice city", "car chase"]);
+  fireEvent.change(screen.getByLabelText("YouTube tags"), { target: { value: "" } });
+  fireEvent.click(screen.getByRole("button", { name: /approve & schedule/i }));
+  await waitFor(() => expect(fetcher.mock.calls.filter(([url]) => url.includes("/approve"))).toHaveLength(2));
+  const last = fetcher.mock.calls.filter(([url]) => url.includes("/approve"))[1][1];
+  expect(JSON.parse(last!.body as string).youtube_tags).toEqual([]);
+});
+
+it("blocks approval including shortcuts for excessive tags, but permits rejection", async () => {
+  const { fetcher } = setup();
+  fireEvent.change(await screen.findByLabelText("YouTube tags"), { target: { value: Array.from({ length: 9 }, (_, n) => `Topic ${n}`).join(", ") } });
+  expect(screen.getByRole("button", { name: /approve & schedule/i })).toBeDisabled();
+  expect(screen.getByRole("alert")).toHaveTextContent("8 tags");
+  fireEvent.keyDown(document.body, { key: "a" });
+  expect(fetcher.mock.calls.some(([url]) => url.includes("/approve"))).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+  await waitFor(() => expect(screen.getByLabelText("Title")).toHaveValue("Clip two"));
 });
 
 it("keeps the current clip and edits when the server rejects a decision", async () => {

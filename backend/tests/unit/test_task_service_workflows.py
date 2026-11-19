@@ -108,6 +108,25 @@ async def _run(service, **kwargs):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("planned",[False,True])
+async def test_generated_tags_survive_render_and_are_grounded_in_final_clip_text(planned):
+    tags=["GTA6","Vice City","Minecraft"]
+    if planned:
+        segment=_part(1,[[0,30]])
+        segment["workflow_meta"]["youtube_tags"]=tags
+        service,_=_workflow_service("series",[segment],SERIES_PLAN)
+    else:
+        service=build_task_service()
+        service.video_service.process_video_complete.return_value["segments_to_render"]=[{"start":0,"end":30,"youtube_tags":tags}]
+    service.video_service.create_single_clip=AsyncMock(return_value={**build_clip_result(),"text":"GTA 6 in Vice City"})
+    await _run(service)
+    meta=service.clip_repo.create_clip.await_args.kwargs["workflow_meta"]
+    assert meta["youtube_tags"] == ["GTA6","Vice City"]
+    if planned:
+        assert meta["ranges"] == [[0,30]] and meta["part_count"] == 2
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("row", [
     {"status": "queued"},                                                # pre-migration row
     {"status": "queued", "workflow": "highlights", "workflow_options": {}},

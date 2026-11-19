@@ -18,6 +18,7 @@ from time import perf_counter
 
 from arq.constants import job_key_prefix, in_progress_key_prefix, expires_extra_ms
 from ..analytics import capture_event, elapsed_seconds, source_kind
+from ..publishing_tags import ground_youtube_tags
 from ..broll import BRollSession
 from ..workers.job_queue import JobQueue
 from ..repositories.task_repository import TaskRepository
@@ -873,6 +874,12 @@ class TaskService(ClipEditingMixin):
                         "part_number": segment.get("part_number"),
                         "workflow_meta": meta or None,
                     }
+
+                suggested_tags = segment.get("youtube_tags", (segment.get("workflow_meta") or {}).get("youtube_tags"))
+                if suggested_tags is not None:
+                    meta = copy.deepcopy(workflow_fields.get("workflow_meta") or {})
+                    meta["youtube_tags"] = ground_youtube_tags(suggested_tags, clip_info.get("text") or "")
+                    workflow_fields["workflow_meta"] = meta
 
                 async with self._processing_transaction(task_id):
                     await check_cancelled()
