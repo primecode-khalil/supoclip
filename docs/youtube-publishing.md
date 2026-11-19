@@ -83,6 +83,9 @@ It does not automatically delete or privatize an already public video.
 Deleting a library clip cancels unstarted work and requests cancellation of its
 future native schedule. External IDs/history receipts remain for reconciliation.
 Native schedule history cannot be deleted before cancellation is confirmed.
+Disconnecting a channel pauses intake/uploads and requests cancellation first;
+credentials stay connected until it finishes. Account deletion also waits, so a
+failed backend request cannot discard the only way to withdraw a schedule.
 
 ## Operations and rollback
 

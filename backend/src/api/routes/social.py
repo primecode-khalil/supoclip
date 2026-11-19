@@ -244,7 +244,10 @@ async def complete_connection(
 async def disconnect_all_accounts(request: Request, db: AsyncSession = Depends(get_db)):
     """Disconnect (and revoke at the platform) every account; used on account deletion."""
     user_id = _session_user_id(request)
-    removed = await _service(request, db).disconnect_all(user_id)
+    try:
+        removed = await _service(request, db).disconnect_all(user_id)
+    except SocialError as exc:
+        raise _http_error(exc)
     return {"message": "Accounts disconnected", "removed": removed}
 
 
@@ -253,7 +256,10 @@ async def disconnect_account(
     account_id: str, request: Request, db: AsyncSession = Depends(get_db)
 ):
     user_id = _session_user_id(request)
-    removed = await _service(request, db).disconnect(user_id, account_id)
+    try:
+        removed = await _service(request, db).disconnect(user_id, account_id)
+    except SocialError as exc:
+        raise _http_error(exc)
     if not removed:
         raise HTTPException(status_code=404, detail="Connected account not found")
     return {"message": "Account disconnected"}
@@ -270,12 +276,15 @@ async def list_posts(
     clip_id: Optional[str] = None,
     status: Optional[str] = None,
     limit: int = 100,
+    account_id: Optional[str] = None,
+    status_group: Optional[Literal["active", "history"]] = None,
+    offset: int = 0,
 ):
     user_id = await _allowed_user_id(request, db)
     posts = await _service(request, db).list_posts(
-        user_id, task_id=task_id, clip_id=clip_id, status=status, limit=limit
+        user_id, task_id=task_id, clip_id=clip_id, status=status, limit=limit, account_id=account_id, status_group=status_group, offset=offset
     )
-    return {"posts": posts, "total": len(posts)}
+    return {"posts": posts, "total": len(posts), "next_offset": max(0, offset)+len(posts) if len(posts)==max(1,min(limit,500)) else None}
 
 
 @router.post("/captions")

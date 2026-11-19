@@ -326,6 +326,7 @@ class SocialRepository:
                         error_message = 'Account disconnected before publishing',
                         updated_at = NOW()
                     WHERE social_account_id = :id AND status IN ('scheduled', 'queued')
+                      AND NOT (provider_options @> '{"native_schedule": true}')
                     """
                 ),
                 {"id": account_id},
@@ -572,9 +573,20 @@ class SocialRepository:
         clip_id: Optional[str] = None,
         status: Optional[str] = None,
         limit: int = 100,
+        account_id: Optional[str] = None,
+        status_group: Optional[str] = None,
+        offset: int = 0,
     ) -> List[Dict[str, Any]]:
         clauses = ["p.user_id = :user_id"]
         params: Dict[str, Any] = {"user_id": user_id, "limit": max(1, min(limit, 500))}
+        params["offset"] = max(0, offset)
+        if account_id:
+            clauses.append("p.social_account_id = :account_id")
+            params["account_id"] = account_id
+        if status_group == "active":
+            clauses.append("p.status IN ('queued','publishing','scheduled','failed')")
+        elif status_group == "history":
+            clauses.append("p.status IN ('published','cancelled')")
         if task_id:
             clauses.append("p.task_id = :task_id")
             params["task_id"] = task_id
@@ -591,8 +603,8 @@ class SocialRepository:
                 FROM social_posts p
                 LEFT JOIN social_accounts a ON a.id = p.social_account_id
                 WHERE {' AND '.join(clauses)}
-                ORDER BY p.created_at DESC
-                LIMIT :limit
+                ORDER BY {"p.scheduled_for ASC NULLS FIRST, p.created_at ASC" if status_group == "active" else "p.created_at DESC"}
+                LIMIT :limit OFFSET :offset
                 """
             ),
             params,
@@ -634,7 +646,7 @@ class SocialRepository:
                 DELETE FROM social_posts
                 WHERE id = :id AND user_id = :user_id
                   AND status NOT IN ('queued', 'publishing')
-                  AND NOT (provider_options @> '{"native_schedule": true}' AND status='scheduled')
+                  AND NOT (provider_options @> '{"native_schedule": true}' AND status NOT IN ('published','cancelled'))
                 RETURNING id
                 """
             ),
@@ -892,6 +904,11 @@ class SocialRepository:
                 WHERE p.status = 'publishing'
                   AND (p.external_post_id IS NULL OR p.provider = 'youtube')
                   AND p.pending_handle IS NOT NULL
+                  AND NOT (p.provider_options @> '{{"native_schedule": true}}')
+                  AND (p.provider<>'youtube' OR NOT EXISTS (
+                    SELECT 1 FROM youtube_uploads u WHERE u.post_id=p.id AND
+                      (u.stage IN ('needs_attention','reconnect_required','ready','cancelled') OR u.next_attempt_at>NOW()
+                       OR u.lease_expires_at>NOW())))
                 ORDER BY p.updated_at ASC
                 LIMIT :limit
                 """
@@ -1224,6 +1241,19 @@ class SocialRepository:
             {"user_id": user_id, "limit": limit},
         )
         return [SocialRepository.serialize_post(row) for row in result.fetchall()]
+
+    @staticmethod
+    async def native_for_disconnect(db, user_id, account_id):
+        account = (await db.execute(text("SELECT id FROM social_accounts WHERE id=:id AND user_id=:user AND revoked_at IS NULL FOR UPDATE"), {"id":account_id,"user":user_id})).scalar_one_or_none()
+        if not account:
+            return []
+        ids = list((await db.execute(text("""
+            SELECT id FROM social_posts WHERE user_id=:user AND social_account_id=:account
+              AND provider_options @> '{"native_schedule": true}' AND status NOT IN ('published','cancelled')
+        """), {"user":user_id,"account":account_id})).scalars())
+        if ids:
+            await db.execute(text("""UPDATE social_publication_policies SET policy=policy || '{"enabled": false, "uploads_paused": true}'::jsonb WHERE account_id=:id"""), {"id":account_id})
+        return ids
 
     @staticmethod
     async def request_native_cancel(db, user_id, post_id):

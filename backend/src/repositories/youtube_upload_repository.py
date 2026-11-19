@@ -116,6 +116,7 @@ class YouTubeUploadRepository:
                 raise ValueError("YouTube's schedule conflicts with another reservation")
         row = (await db.execute(text("""
             UPDATE youtube_uploads SET stage=:stage,actual_visibility=:privacy,confirmed_publish_at=:at,
+              desired_publish_at=COALESCE(:at,desired_publish_at),
               next_attempt_at=:next,reason_code=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=NOW()
             WHERE post_id=:id AND lease_token=:token AND lease_expires_at>NOW() RETURNING video_id
         """), {"id": post_id,"token":token,"stage":stage,"privacy":visibility,"at":publish_at,"next":next_at})).mappings().first()

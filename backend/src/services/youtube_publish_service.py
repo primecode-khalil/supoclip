@@ -205,6 +205,8 @@ class YouTubePublishService(YouTubeNativeSchedule):
             access_token = await self.social._get_valid_access_token(account)
             await self.db.commit()
             video = await run_in_thread(self.provider.fetch_video_status, access_token, lease["video_id"])
+            if not video and lease.get("schedule_requested_at") and datetime.now(timezone.utc)-lease["schedule_requested_at"] > timedelta(hours=6):
+                raise YouTubeUploadError("This scheduled video is unavailable. Check whether it was deleted or access changed in YouTube Studio.", "video_unavailable", outcome_unknown=True)
             status = video.get("status") or {}
             processing = video.get("processingDetails") or {}
             if status.get("uploadStatus") in {"failed", "rejected", "deleted"} or processing.get("processingStatus") in {"failed", "terminated"}:

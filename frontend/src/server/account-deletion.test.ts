@@ -116,15 +116,15 @@ describe("prepareAccountDeletion", () => {
     expect(deleteMany).toHaveBeenCalled();
   });
 
-  it("still deletes the account when social revocation fails", async () => {
+  it("keeps the account when social schedule withdrawal cannot be confirmed", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const { deleteMany } = mockPrisma(null);
     vi.mocked(fetchBackend).mockRejectedValueOnce(new Error("backend down"));
-    await expect(prepareAccountDeletion("user-1")).resolves.toBeUndefined();
+    await expect(prepareAccountDeletion("user-1")).rejects.toBeTruthy();
 
     vi.mocked(fetchBackend).mockResolvedValueOnce(new Response(null, { status: 503 }));
-    await expect(prepareAccountDeletion("user-1")).resolves.toBeUndefined();
-    expect(deleteMany).toHaveBeenCalledTimes(2);
+    await expect(prepareAccountDeletion("user-1")).rejects.toBeTruthy();
+    expect(deleteMany).not.toHaveBeenCalled();
   });
 
   it("does not revoke social accounts when deletion is blocked", async () => {

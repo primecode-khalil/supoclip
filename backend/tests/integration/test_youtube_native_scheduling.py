@@ -262,3 +262,90 @@ async def test_native_schedule_edited_in_studio_updates_reservation(native, db_s
     result = await service.get_post("user-1", post["id"])
     reservation = (await db_session.execute(text("SELECT publish_at FROM social_publication_slots WHERE review_id=:id"), {"id":post["provider_options"]["review"]["id"]})).scalar_one()
     assert datetime.fromisoformat(result["scheduled_for"]) == moved == reservation
+
+async def test_disconnect_and_account_deletion_wait_for_native_cancellation(native, db_session, client, auth_headers):
+    service, post, http, _ = native
+    await scheduled(native, db_session)
+    http.routes[("POST", "oauth2.googleapis.com/revoke")] = FakeResponse(200, {})
+    for endpoint in [f"/social/connections/{post['social_account_id']}", "/social/connections"]:
+        response = await client.delete(endpoint, headers=auth_headers)
+        assert response.status_code == 409, response.text
+        account = await service.repo.get_account_with_tokens(db_session, post["social_account_id"])
+        assert account["access_token_encrypted"] and account["revoked_at"] is None
+        result = await service.get_post("user-1", post["id"])
+        assert result["status"] != "cancelled" and "publishAt" in http.resource["status"]
+    await service.publish_post(post["id"])
+    assert (await service.get_post("user-1", post["id"]))["status"] == "cancelled"
+    response = await client.delete(f"/social/connections/{post['social_account_id']}", headers=auth_headers)
+    assert response.status_code == 200
+
+
+async def test_failed_native_history_cannot_erase_unconfirmed_remote_schedule(native, db_session, client, auth_headers):
+    service, post, http, _ = native
+    await scheduled(native, db_session)
+    await db_session.execute(text("UPDATE social_posts SET status='failed' WHERE id=:id"), {"id":post["id"]})
+    await db_session.commit()
+    response = await client.delete(f"/social/posts/{post['id']}", headers=auth_headers)
+    assert response.status_code == 400
+    assert (await service.get_post("user-1", post["id"]))["external_post_id"] == "video-1"
+
+
+async def test_missing_scheduled_video_stops_polling_after_a_bound(native, db_session, monkeypatch):
+    service, post, http, _ = native
+    await scheduled(native, db_session)
+    http.resource = {}
+    await db_session.execute(text("UPDATE youtube_uploads SET processing_started_at=NOW()-INTERVAL '7 hours',schedule_requested_at=NOW()-INTERVAL '7 hours',next_attempt_at=NOW() WHERE post_id=:id"), {"id":post["id"]})
+    await db_session.commit()
+    await service.publish_post(post["id"])
+    result = await service.get_post("user-1", post["id"])
+    assert result["status"] == "failed" and result["reason_code"] == "video_unavailable"
+
+
+async def test_second_reconciliation_preserves_adopted_studio_time(native, db_session):
+    service, post, http, _ = native
+    result = await scheduled(native, db_session)
+    moved = datetime.fromisoformat(result["scheduled_for"]) + timedelta(days=1)
+    http.resource["status"]["publishAt"] = moved.isoformat()
+    for _ in range(2):
+        await due(db_session, post["id"])
+        await service.publish_post(post["id"])
+    result = await service.get_post("user-1", post["id"])
+    assert datetime.fromisoformat(result["scheduled_for"]) == moved and len(updates(http)) == 1
+
+
+async def test_native_publication_intent_checks_metered_scheduling_access(review_item, client, auth_headers, app, monkeypatch):
+    item, _, _, _ = review_item
+    monkeypatch.setattr(SocialService, "can_schedule", lambda *_a: _false())
+    response = await client.post(f"/social/review/{item['id']}/approve", headers=auth_headers, json={"expected_version":item["version"]})
+    assert response.status_code == 402
+
+async def _false():
+    return False
+
+
+async def test_native_backlog_does_not_starve_other_provider_polling(native, db_session):
+    service, post, http, _ = native
+    await service.publish_post(post["id"])
+    await db_session.execute(text("UPDATE social_posts SET updated_at=NOW()-INTERVAL '1 day' WHERE id=:id"), {"id":post["id"]})
+    second = str(uuid.uuid4())
+    await db_session.execute(text("""
+      INSERT INTO social_posts(id,user_id,task_id,clip_id,social_account_id,provider,status,pending_handle)
+      SELECT :new,user_id,task_id,clip_id,social_account_id,'tiktok','publishing','accepted-tiktok' FROM social_posts WHERE id=:id
+    """), {"new":second,"id":post["id"]})
+    await db_session.commit()
+    rows = await service.repo.list_pending_publishes(db_session, limit=1)
+    assert [row["id"] for row in rows] == [second]
+
+
+async def test_destination_active_query_cannot_hide_a_schedule_behind_history(native, db_session, client, auth_headers):
+    service, post, http, _ = native
+    await scheduled(native, db_session)
+    await db_session.execute(text("""
+      INSERT INTO social_posts(id,user_id,task_id,clip_id,social_account_id,provider,status,title,created_at)
+      SELECT 'history-' || n,user_id,task_id,clip_id,social_account_id,'youtube','published','Newer history',NOW()+INTERVAL '1 day'
+      FROM social_posts CROSS JOIN generate_series(1,201) n WHERE id=:id
+    """), {"id":post["id"]})
+    await db_session.commit()
+    response = await client.get(f"/social/posts?account_id={post['social_account_id']}&status_group=active&limit=100", headers=auth_headers)
+    assert response.status_code == 200
+    assert [p["id"] for p in response.json()["posts"]] == [post["id"]]

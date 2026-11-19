@@ -160,9 +160,9 @@ async def seed_customer(db_session, tmp_path, *, with_clip=True):
     return user_id, customer
 
 
-async def run_until_idle(monkeypatch, review_config):
+async def run_until_idle(monkeypatch, review_config, advance=timedelta(minutes=2)):
     """Run the cron job with the settle window already elapsed."""
-    monkeypatch.setattr(runner, "_now", lambda: datetime.now(timezone.utc) + timedelta(minutes=2))
+    monkeypatch.setattr(runner, "_now", lambda: datetime.now(timezone.utc) + advance)
     monkeypatch.setattr("src.media_storage.MediaStorage", LocalStorage)
     return await runner.process_cancellation_reviews({})
 
@@ -355,7 +355,7 @@ async def test_reconciliation_catches_a_cancellation_without_an_event(
         {"u": user_id, "s": f"sub_missed_{uuid4().hex[:8]}"},
     )
     await db_session.commit()
-    result = await run_until_idle(monkeypatch, review_config)
+    result = await run_until_idle(monkeypatch, review_config, advance=timedelta(hours=3))
     assert result["reconciled"] == 1 and result["reviews"] == ["reported"]
     assert "survey answer and comment are not available" in chat[0]["message"]
 
@@ -373,10 +373,13 @@ async def test_account_migration_transfer_is_excluded_until_the_customer_cancels
                source_account VARCHAR(255), source_customer VARCHAR(255), source_subscription VARCHAR(255),
                destination_account VARCHAR(255), destination_customer VARCHAR(255),
                destination_subscription VARCHAR(255), stage VARCHAR(32), cancellation_requested BOOLEAN,
-               review_reason TEXT)"""))
+               review_reason TEXT, revision INTEGER, paid_through TIMESTAMPTZ, livemode BOOLEAN)"""))
     await db_session.execute(
-        text("""INSERT INTO stripe_account_migrations VALUES (:id, :u, :acct, :cus, :sub, 'acct_dest', 'cus_dest',
-                NULL, 'destination_staged', FALSE, NULL)"""),
+        text("""INSERT INTO stripe_account_migrations
+                (id,user_id,source_account,source_customer,source_subscription,destination_account,destination_customer,
+                 destination_subscription,stage,cancellation_requested,review_reason,revision,paid_through,livemode)
+                VALUES (:id, :u, :acct, :cus, :sub, 'acct_dest', 'cus_dest',
+                NULL, 'destination_staged', FALSE, NULL,0,NOW()+INTERVAL '1 day',FALSE)"""),
         {"id": str(uuid4()), "u": user_id, "acct": ACCOUNT, "cus": customer, "sub": sub_id},
     )
     await db_session.commit()

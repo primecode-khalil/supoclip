@@ -12,6 +12,12 @@ describe("affiliates table (real Postgres)", () => {
   beforeAll(async () => {
     db = new PGlite({ extensions: { uuid_ossp } });
     await db.exec(read("../../../init.sql"));
+    // Apply and replay the additive publishing migrations over fresh bootstrap.
+    for (const migration of ["20261119170000_youtube_uploads", "20261119180000_social_review", "20261119190000_youtube_native_schedule"]) {
+      const ddl = read(`../../prisma/migrations/${migration}/migration.sql`);
+      await db.exec(ddl);
+      await db.exec(ddl);
+    }
     // Production databases get the table from the Prisma migration, so test that DDL.
     await db.exec("DROP TABLE affiliates");
     await db.exec(read("../../prisma/migrations/20261009120000_add_affiliates/migration.sql"));

@@ -76,12 +76,14 @@ export async function prepareAccountDeletion(userId: string): Promise<void> {
 }
 
 async function revokeSocialConnections(userId: string): Promise<void> {
+  let response: Response;
   try {
-    const response = await fetchBackend("/social/connections", { method: "DELETE", userId });
-    if (!response.ok) {
-      console.error(`Failed to revoke social connections (HTTP ${response.status})`);
-    }
-  } catch (error) {
-    console.error("Failed to revoke social connections", error);
+    response = await fetchBackend("/social/connections", { method: "DELETE", userId });
+  } catch {
+    throw new APIError("BAD_REQUEST", { message: "Could not confirm social schedule cancellation. Try again when the server is available." });
+  }
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new APIError("BAD_REQUEST", { message: typeof body.detail === "string" ? body.detail : "Social cancellation is not confirmed. Check Publishing and try deleting your account again." });
   }
 }

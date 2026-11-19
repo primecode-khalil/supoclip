@@ -354,6 +354,15 @@ class SocialService:
 
     async def disconnect(self, user_id: str, account_id: str) -> bool:
         account = await self.repo.get_account_with_tokens(self.db, account_id)
+        if hasattr(self.repo, "native_for_disconnect"):
+            pending = await self.repo.native_for_disconnect(self.db, user_id, account_id)
+            if pending:
+                for post_id in pending:
+                    await self.repo.request_native_cancel(self.db, user_id, post_id)
+                    await self._enqueue_recovery(post_id)
+                error = SocialValidationError("YouTube cancellation is pending. Uploads are paused; wait for confirmation in Publishing, then disconnect again. Check Studio if urgent.")
+                error.status_code = 409
+                raise error
         # Clear local credentials first: disconnecting must work even when the
         # platform is unreachable.
         removed = await self.repo.revoke_account(self.db, user_id, account_id)
@@ -552,7 +561,7 @@ class SocialService:
         now = datetime.now(timezone.utc)
         native_schedule = provider.name == "youtube" and (provider_options or {}).get("native_schedule") is True
         status = "scheduled" if when and when > now + timedelta(seconds=30) and not native_schedule else "queued"
-        if status == "scheduled" and not await self.can_schedule(user_id):
+        if (status == "scheduled" or native_schedule) and not await self.can_schedule(user_id):
             raise SocialPlanRequired(
                 "Scheduling posts is available on the Creator plan. "
                 "You can still publish right away."
@@ -635,9 +644,12 @@ class SocialService:
         clip_id: Optional[str] = None,
         status: Optional[str] = None,
         limit: int = 100,
+        account_id: Optional[str] = None,
+        status_group: Optional[str] = None,
+        offset: int = 0,
     ) -> List[Dict[str, Any]]:
         return await self.repo.list_posts(
-            self.db, user_id, task_id=task_id, clip_id=clip_id, status=status, limit=limit
+            self.db, user_id, task_id=task_id, clip_id=clip_id, status=status, limit=limit, **({"account_id": account_id, "status_group": status_group, "offset": offset} if account_id or status_group or offset else {})
         )
 
     async def get_post(self, user_id: str, post_id: str) -> Dict[str, Any]:
@@ -728,7 +740,7 @@ class SocialService:
         post = await self.repo.get_user_post(self.db, user_id, post_id)
         if not post:
             return False
-        if post.get("provider_options", {}).get("native_schedule") and post["status"] == "scheduled":
+        if post.get("provider_options", {}).get("native_schedule") and post["status"] not in {"published", "cancelled"}:
             raise SocialValidationError("Cancel the YouTube schedule before deleting its history.")
         if post["status"] in {"queued", "publishing"} or not await self.repo.delete_post(
             self.db, user_id, post_id

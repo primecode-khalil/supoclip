@@ -38,7 +38,7 @@ for (const width of [1440, 320]) {
     await page.route("**/api/social/providers", route => route.fulfill({ json: { enabled: true, providers: [] } }));
     await page.route("**/api/social/youtube/setup", route => route.fulfill({ json: { configured: true, connections: [account], private_test_completed: false } }));
     await page.route("**/api/demo-video/*", route => route.fulfill({ body: media, contentType: "video/mp4" }));
-    await page.route("**/api/social/posts?*", route => route.fulfill({ json: { posts } }));
+    await page.route("**/api/social/posts?*", route => route.fulfill({ json: { posts: posts.filter(p => route.request().url().includes("status_group=history") ? ["published","cancelled"].includes(String(p.status)) : !["published","cancelled"].includes(String(p.status))) } }));
     await page.route("**/api/social/review?*", route => route.fulfill({ json: { items: route.request().url().includes("status=rejected") ? rejected : pending, settings } }));
     await page.route("**/api/social/review/*/approve", async route => {
       approvals++;

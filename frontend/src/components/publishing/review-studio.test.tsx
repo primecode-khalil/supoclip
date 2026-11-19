@@ -96,3 +96,11 @@ it("saves weekly local times and selected days", async () => {
   const body = JSON.parse(fetcher.mock.calls.find(([, opts]) => opts?.method === "PUT")![1]!.body as string);
   expect(body.schedule).toMatchObject({ kind: "weekly", times: ["09:00", "15:00"], weekdays: [0,1,2,3,4,5] });
 });
+
+it("queries active work for this destination separately from paginated history", async () => {
+  const { fetcher } = setup();
+  await screen.findByLabelText("Title");
+  expect(fetcher.mock.calls.some(([url]) => url.includes("posts?") && url.includes("account_id=account") && url.includes("status_group=active"))).toBe(true);
+  fireEvent.click(screen.getByRole("button", { name: "History" }));
+  await waitFor(() => expect(fetcher.mock.calls.some(([url]) => url.includes("status_group=history") && url.includes("offset=0"))).toBe(true));
+});
