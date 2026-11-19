@@ -108,7 +108,8 @@ near their due time rather than polling every future video continuously.
 
 Schema changes are additive and mirrored in backend SQL and Prisma migrations.
 Drain active tasks/ARQ jobs, back up the database and retain previous image IDs
-before restarting. Preserve committed dependency locks and patched base pins;
+before restarting. A graceful recorder restart retains completed chunks but can
+leave a brief capture gap; prefer updating while the stream is offline. Preserve committed dependency locks and patched base pins;
 scan freshly built final images. Confirm `/health`, frontend health, all workers,
 and the live `/changelog` after release.
 
