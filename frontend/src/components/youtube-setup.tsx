@@ -37,7 +37,7 @@ export function YouTubeSetup() {
   return (
     <section aria-labelledby="youtube-setup-heading" className="mb-8 rounded-xl border p-4 sm:p-5">
       <h2 id="youtube-setup-heading" className="font-semibold">YouTube setup</h2>
-      <p className="mt-1 text-sm text-muted-foreground">Connect once, test privately, then choose which clips to publish. Public posting stays off until you enable it.</p>
+      <p className="mt-1 text-sm text-muted-foreground">Connect once, choose a posting pattern, then review your clips. Public posting stays off until you approve a clip or explicitly enable automatic approval.</p>
       {error ? <div role="alert" className="mt-4 text-sm">Could not load YouTube setup. <Button variant="outline" size="sm" onClick={() => void load()}><RefreshCw className="size-3" />Retry</Button></div> : !setup ? <p role="status" className="mt-4 text-sm text-muted-foreground">Loading setup…</p> : (
         <ol className="mt-5 space-y-5">
           {step(setup.configured, "Add your Google app", <><a className="underline" href="https://console.cloud.google.com/apis/library/youtube.googleapis.com" target="_blank" rel="noreferrer">Enable YouTube Data API</a>, create a Web OAuth client, and save its client ID and secret in <Link className="underline" href="/admin">server settings</Link>. No YouTube password or cookies are needed.</>)}
@@ -50,7 +50,7 @@ export function YouTubeSetup() {
             )}
             <p className="mt-1">For unattended use, move your Google consent app out of Testing. Testing access expires after seven days; revoked access still needs reconnection.</p>
           </>)}
-          {step(setup.private_test_completed, "Complete a private test upload", <><Link className="underline" href="/list">Choose a clip in your library</Link>, publish it privately, and verify the processed video, captions and audio. This does not turn on automatic posting.</>)}
+          {step(setup.private_test_completed, "Complete a private test upload", <><Link className="underline" href="/publishing">Open the review queue</Link> and approve a clip. It uploads and processes privately before its approved public schedule is set. You can also publish a private test from your library. Check the processed video, captions and audio; automatic approval stays off.</>)}
         </ol>
       )}
     </section>

@@ -49,8 +49,8 @@ export function PolicyForm({ policy, connections, connectionError, onSave }: Pro
         </div>
         <p className="text-xs leading-relaxed text-muted-foreground">Each finished window becomes a vertical video generation with captions. Overlap keeps moments that cross a recording boundary together.</p>
         <div className="space-y-3 border-t pt-5">
-          <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold">Automatic publishing</h3><Link href="/settings/social" className="text-xs font-medium underline underline-offset-4">Manage connected accounts</Link></div>
-          <p className="text-xs text-muted-foreground">Choose where qualifying clips go. Leave all accounts unchecked to keep clips in your library.</p>
+          <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold">Publishing destinations</h3><Link href="/settings/social" className="text-xs font-medium underline underline-offset-4">Manage connected accounts</Link></div>
+          <p className="text-xs text-muted-foreground">Choose where qualifying clips go. YouTube destinations with a review policy wait for approval in Publishing. Existing source rules remain until you save a destination policy. Leave all accounts unchecked to keep clips in your library.</p>
           {connectionError ? <p role="status" className="text-xs text-destructive">{connectionError} Your saved destinations will be preserved.</p> : connections.length === 0 ? <p className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">No connected accounts. Connect YouTube or Instagram to enable publishing.</p> : (
             <div className="space-y-2">{connections.map((account) => {
               const eligible = account.status === "active" && account.provider !== "tiktok";

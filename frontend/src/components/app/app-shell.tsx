@@ -34,7 +34,7 @@ const NAV: NavItem[] = [
   { href: "/", labelKey: "create", icon: Sparkles, match: (p) => p === "/" },
   { href: "/list", labelKey: "library", icon: Film, match: (p) => p.startsWith("/list") || p.startsWith("/tasks") },
   { href: "/recording", labelKey: "recording", icon: Radio, match: (p) => p.startsWith("/recording") },
-  { href: "/settings/social", labelKey: "social", icon: Share2, match: (p) => p.startsWith("/settings/social"), social: true },
+  { href: "/publishing", labelKey: "social", icon: Share2, match: (p) => p.startsWith("/publishing") || p.startsWith("/settings/social"), social: true },
   { href: "/analytics", labelKey: "analytics", icon: ChartColumn, match: (p) => p.startsWith("/analytics"), social: true },
   { href: "/settings/api-keys", labelKey: "agents", icon: Bot, match: (p) => p.startsWith("/settings/api-keys"), mobile: false },
   { href: "/settings", labelKey: "settings", icon: Settings, match: (p) => p === "/settings" },
@@ -82,7 +82,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useAppTheme(Boolean(user));
   const admin = Boolean((user as { is_admin?: boolean } | undefined)?.is_admin);
   const socialAccess = useSocialAccess(Boolean(user));
-  const labeled = NAV.map((item) => ({ ...item, label: item.labelKey === "recording" ? "Live channels" : t(`nav.${item.labelKey}`) }));
+  const labeled = NAV.map((item) => ({ ...item, label: item.labelKey === "recording" ? "Live channels" : item.labelKey === "social" ? "Publishing" : t(`nav.${item.labelKey}`) }));
   const nav = labeled.filter((item) => !item.social || socialAccess === true);
   const mobileNav = nav.filter((item) => item.mobile !== false);
   const items = admin ? [...nav, { href: "/admin", label: t("nav.admin"), icon: Shield, match: (p: string) => p.startsWith("/admin") }] : nav;
@@ -302,7 +302,7 @@ function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (
       })),
       { id: "library", label: t("palette.library"), href: "/list", icon: Film },
       { id: "recording", label: "Live channels", hint: "Monitor streams and automate clipping", href: "/recording", icon: Radio },
-      ...(socialAccess === true ? [{ id: "social", label: t("palette.social"), hint: t("palette.socialHint"), href: "/settings/social", icon: Share2 },
+      ...(socialAccess === true ? [{ id: "social", label: "Publishing", hint: "Review clips and schedule YouTube Shorts", href: "/publishing", icon: Share2 },
       { id: "analytics", label: t("nav.analytics"), hint: t("palette.analyticsHint"), href: "/analytics", icon: ChartColumn }] : []),
       { id: "keys", label: t("nav.agents"), hint: t("palette.agentsHint"), href: "/settings/api-keys", icon: Bot },
       { id: "settings", label: t("nav.settings"), href: "/settings", icon: Settings },

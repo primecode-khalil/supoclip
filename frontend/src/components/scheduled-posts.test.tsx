@@ -60,3 +60,19 @@ it("cancels a scheduled post from its menu", async () => {
   expect(fetchMock).toHaveBeenCalledWith("/api/social/posts/a/cancel", { method: "POST" });
   expect(await screen.findByText(/Nothing scheduled/)).toBeInTheDocument();
 });
+
+it("calls a native cancellation a request until YouTube confirms it", async () => {
+  const fetchMock = vi.fn()
+    .mockResolvedValueOnce(Response.json({ posts: [scheduledPost("native", 2, "Native clip")] }))
+    .mockResolvedValueOnce(Response.json({ post: { id: "native", status: "publishing" } }))
+    .mockResolvedValue(Response.json({ posts: [] }));
+  vi.stubGlobal("fetch", fetchMock);
+  fireEvent.keyDown(await renderAndFindActions(), { key: "Enter" });
+  fireEvent.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: /cancel post/i }));
+  await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Cancellation requested. Check Publishing for confirmation."));
+  expect(toast.success).not.toHaveBeenCalledWith("Scheduled post cancelled");
+});
+async function renderAndFindActions() {
+  render(<ScheduledPosts sectionHeadingClassName="" />);
+  return screen.findByRole("button", { name: "Scheduled post actions" });
+}
