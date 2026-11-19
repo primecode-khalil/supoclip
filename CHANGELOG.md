@@ -6,6 +6,9 @@ Add a line here when a pull request changes something a user can see. Use **New*
 
 ## 2026-11-19
 
+- **New:** Review captioned vertical clips one at a time, approve or reject them, and schedule approved YouTube Shorts every six hours or on your own posting pattern. Private uploads, processing checks, recovery and verified cancellation keep the queue truthful. Rejected clips stay in your library. ([#2](https://github.com/primecode-khalil/supoclip/pull/2))
+- **Fixed:** Selected compatible upstream fixes improve task retry safety, long YouTube downloads, database connection limits and editor/export recovery while preserving live-recording history. ([#2](https://github.com/primecode-khalil/supoclip/pull/2))
+
 - **New:** Clear failed or all finished clip-window history from Live channels while keeping captured recordings and library clips. Deleting a generation from the library also removes its attached window from recent activity, and cleared work stays cleared after recorder recovery. ([#1](https://github.com/primecode-khalil/supoclip/pull/1))
 
 ## 2026-11-18

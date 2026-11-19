@@ -622,3 +622,8 @@ and network transfer are billed separately.
 The publishing and scheduling form drafts editable captions with `claude-haiku-5-5`.
 This requires `ANTHROPIC_API_KEY`, independently of the clip-selection `LLM`.
 Drafting failures keep the caption editable and posting available. No migration is required.
+
+## Review and native YouTube scheduling
+
+See [YouTube publishing](youtube-publishing.md) for one-by-one review, configurable
+posting patterns, Google OAuth setup, recovery and cancellation.

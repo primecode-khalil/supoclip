@@ -233,3 +233,8 @@ This CPU bundle has no GPU reservation. On a compatible amd64 NVIDIA host, verif
 ## Validation status
 
 The bundle supports static validation using `compose.sh config --quiet`, Python/shell syntax checks, and preflight tests. A live VPS deployment, TLS issuance, sustained real-stream capture, provider throughput, off-host restoration, and actual social publication require target infrastructure and authorized accounts. These remain launch checks, not outcomes of configuration validation.
+
+## Review and native YouTube scheduling
+
+See [YouTube publishing](youtube-publishing.md) for one-by-one review, configurable
+posting patterns, Google OAuth setup, recovery and cancellation.
