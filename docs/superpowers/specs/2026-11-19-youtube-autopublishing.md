@@ -1,131 +1,127 @@
-# YouTube automatic publishing design
+# YouTube review and native scheduling design
 
-Status: proposed; researched against fork `35c383c` and upstream `09690e0` on
-2026-11-19. No upload or public post has been made for this planning task.
+Status: in implementation. Revised 2026-11-19 following the owner's request to
+watch clips one at a time and approve or reject them before scheduling.
+The AGPL backports, OAuth setup, metadata validation, durable upload and basic
+processing checks are already implemented on the feature branch. Production has
+not been changed by this feature.
 
-## Outcome and first release
+## Main workflow
 
-An owner connects a YouTube channel in the dashboard, chooses which live sources
-may publish there, and enables automatic publishing. New eligible captioned
-vertical clips then enter a paced, durable queue. The dashboard explains progress,
-shows the resulting video link, and offers a separate publishing pause switch.
-Recording continues while publishing is paused or quota is exhausted.
+Connect YouTube, choose a posting pattern, then open Publishing → Review. Watch
+one captioned vertical clip at a time. Approve reserves the next slot and queues
+its upload; Reject keeps the clip in the library and offers Undo. Advance to the
+next clip after each decision. Display the exact destination and proposed local
+publication time before approval. Title and description can be edited before
+approval. No repeated confirmation modal is needed: Approve & schedule is the
+explicit authorization for that clip.
 
-Start with YouTube only. Reuse the native account connections, encrypted tokens,
-social posts, ARQ workers and recording overlap reservations. Keep provider
-interfaces compatible with the existing Instagram and TikTok adapters. Facebook
-and further provider-specific setup belong to later releases.
-
-## Existing behavior and gaps
-
-The app already supports OAuth, refresh/revoke, manual posts, scheduling,
-multi-account selection, post history, basic metrics and score-filtered live
-publication. Its YouTube adapter initiates a resumable upload but keeps the
-session URL in memory, sends the file, and immediately reports it published.
-An ambiguous response currently stops automatic retry; preserve that protection.
-
-At planning time the deployed instance has no configured YouTube OAuth application
-and no active YouTube connection. Adding Google app credentials and completing
-owner consent are setup steps, not a need to rewrite authentication. The callback
-uses the app's public origin plus `/api/social/callback/youtube`.
+Review-first is the default for new YouTube connections. Optional automatic
+approval is an advanced, explicit opt-in for future clips, available only after a
+verified private upload. Existing source configurations are retained until their
+owner adopts the new destination policy. Explicitly importing existing library
+clips into review does not upload them and does not enable automatic approval.
 
 ## Global requirements
 
-- Preserve the fork's AGPL baseline; do not import post-license-change upstream code in this feature.
-- Keep the Linux single-script installer and dashboard configuration path.
-- Keep social credentials and resumable session URLs encrypted; never expose them in API JSON, logs, screenshots, or errors.
-- Default automatic publishing to disabled, visibility to private, and backfill to disabled.
-- For a newly created rule default to score >= 75, at most 3 posts per destination per day, and at least 60 minutes between uploads; these are adjustable engineering defaults, not performance claims.
-- Preserve existing saved policies and caps until the owner explicitly opts into a new publishing rule.
-- Accept only verified, playable 9:16 outputs with audio and duration > 0 and <= 180 seconds for this automatic Shorts workflow.
-- Do not make an extra LLM call mandatory for posting; use existing hook/transcript metadata as the fallback.
-- Never automatically start a second video upload when the first upload's outcome remains unknown.
-- Deleting a library item cancels its unstarted publication and does not delete an already uploaded YouTube video.
-- Pausing publishing, reaching its limits, or failing a social API call must not stop capture.
-- No public test post or activation of a real publishing rule without an explicit owner action.
+- Preserve the fork's AGPL baseline and the Linux installer/dashboard path.
+- Keep credentials and resumable session URLs encrypted and out of public JSON, logs, screenshots and errors.
+- Default new destination policies to review mode; no clip is uploaded or publicly scheduled until approved.
+- Default the posting interval to 360 minutes; also support weekly local posting times and a per-video custom time.
+- Preserve existing approved reservations when the posting pattern changes; apply the new pattern to subsequent approvals.
+- Interpret weekly posting times in the selected IANA timezone, handle DST, and reserve each destination/time at most once.
+- Reject past or too-near publication times; if processing misses a slot, move the approved clip to the next free slot in its approved pattern.
+- Upload scheduled clips privately, verify processing and channel identity, then set and verify YouTube's native publishAt.
+- Never automatically start a second video upload when the first outcome is unknown; reuse the durable session or video ID.
+- Approve and Reject require the signed owner's session; recording workers may add review candidates but cannot forge manual approval.
+- Reject and Undo do not delete library clips or recordings.
+- Freeze the render the owner approved; a changed preview version must be reviewed again.
+- Validate an approved Short as playable 9:16 video with audio, duration > 0 and <= 180 seconds.
+- No extra LLM call is mandatory for review, metadata or scheduling.
+- Pause intake/uploading independently of recording. Already confirmed YouTube schedules continue on YouTube unless explicitly cancelled.
+- Cancel a native schedule on YouTube before reporting it cancelled; failed cancellation must remain visible as still needing action.
+- Deleting a library item cancels its unstarted work and requests cancellation of any attached future native schedule; keep external video/history receipts.
+- Bound review intake to 200 pending items per destination and unattended approval to nine unpublished items; excess clips remain in the library.
+- No real public upload/schedule, account connection, or automatic-approval activation without the corresponding explicit owner action.
 
-## Dashboard and setup
+## Patterns and slot allocation
 
-Extend Settings → Social with a YouTube setup checklist: Google app credentials
-configured, exact callback URL, account connected, confirmed channel name/avatar,
-refresh access available, private test completed, and automatic rule enabled.
-Reuse the existing encrypted admin settings for app credentials. Never ask for a
-YouTube password or cookies; publishing uses Google OAuth directly from the VPS.
+A policy contains review/automatic mode, enabled intake, upload pause, timezone,
+minimum score, category/audience/disclosure and a schedule. Interval mode uses an
+anchor and elapsed minutes (default six hours). Weekly mode uses a nonempty set
+of weekdays and unique local HH:MM times. Custom one-off publication times may be
+chosen at approval. Default upload/processing lead time is 15 minutes.
 
-Explain Google's Testing-mode token lifetime and direct the owner to the consent
-screen's production setting for unattended use. Show verification/user-cap limits
-when applicable rather than promise that every self-hosted app needs the same
-verification process. Validate the actual redirect URI in Google setup; use a
-stable owner-controlled domain if verification requires domain ownership.
+Allocate under a destination lock and persist the reservation before returning
+approval. Double clicks/retries reuse the same reservation and post. A late upload
+uses the next free future slot instead of sending a past publishAt, which Google
+would publish immediately. On DST transitions skip nonexistent weekly local times
+and use the first occurrence of an ambiguous local time, once. Existing reservations
+and confirmed native schedules are not silently rearranged by policy edits.
 
-The owner chooses destination, explicit privacy, audience, category, optional
-synthetic-content disclosure, score threshold, daily limit, spacing and timezone.
-An enable timestamp admits future clips only. Changing the target destination
-does not silently move queued posts. A disabled rule sends no new uploads.
-Manual posts remain available and count toward destination pacing.
+## Private uploads and native publication
 
-## Durable upload and truthful completion
+Reuse the existing social posts and the private youtube_uploads checkpoints.
+Approval binds review ID, immutable render/version/hash, final public intent and
+a reserved publication time. Upload bytes with private visibility only. Once
+processing succeeds, use videos.update to set private visibility plus a future
+publishAt, preserving the video's other mutable status settings. Confirm the
+returned/read-back schedule before showing Scheduled on YouTube. At the due time,
+poll the existing ID and report Published only when actually public. YouTube can
+publish a confirmed schedule while the VPS is offline.
 
-Add a private upload-attempt record linked to the existing social post. It stores
-an encrypted session URI, immutable media hash/size and metadata snapshot,
-confirmed byte offset, upload stage, external video ID and bounded retry/poll
-times. A persisted transfer lease fences concurrent workers. Commit the session
-before sending bytes; a crash before that point may abandon an empty session but
-must not lead to a duplicate video. Network I/O runs without an open database
-transaction. Decrypt the session URI only for provider calls.
+Request youtube.force-ssl alongside the current upload/read permissions so the app
+can create, change and remove native schedules. Explain reconnection for older
+grants. Distinguish the separate Google upload bucket from general API quota;
+shared quota deferrals must not retry every clip at once. Use the existing API-host
+cron worker queue for network jobs and recover queued/due jobs from PostgreSQL.
 
-Use YouTube's resumable protocol with whole-file transfer where possible, then
-status probes and confirmed-offset continuation after interruption. A 308 response
-means incomplete, not published. Bind retries to the exact file hash and metadata;
-do not resume changed bytes in an old session. Once a video ID is known, retry only
-processing/status checks. If an expired or lost session cannot establish whether
-a video was accepted, show Needs attention rather than upload it again.
+Cancellation is a durable request. If the video remains private, remove publishAt
+on YouTube and verify its absence before marking cancelled. If already public,
+report that truth and the video link; do not claim it was prevented. A lost status
+update response is reconciled against the same video ID, never by re-uploading.
 
-Poll owner-authorized video processing and upload status, then verify actual
-privacy. A processed private video is Ready (private); a processed public video
-is Published. A processing rejection or unexpected privacy is visible and does
-not trigger another upload. Do not promise exactly-once external effects when
-Google has accepted bytes but cannot return a recoverable outcome.
+## Review UI
 
-## Queue policy and failure behavior
+A dedicated Publishing page has Review, Queue and History views. Review shows a
+large vertical player, source/title, editable title/description, target account,
+next time and Approve & schedule / Reject / Later controls. A and R shortcuts are
+ignored while typing and while a decision is in flight. Reject offers Undo. The
+queue shows upload/processing/native scheduling progress, reserved times, actual
+YouTube links, quota/reconnect/attention reasons, and cancellation/rescheduling.
+The schedule editor supports interval hours, weekly days/times and timezone.
 
-Use an owner-scoped destination policy shared by sources targeting the same
-connected channel. Reserve slots transactionally, count manual and automated
-uploads once, and use PostgreSQL time. Evaluate the owner's timezone for daily
-limits with DST-aware boundaries; never reset a cap because a worker restarted.
-Retain source-range overlap reservations and request tombstones. Duplicate ARQ
-delivery or recorder recovery must refer to the same logical post.
+The first private test can be the first manually approved clip: it is processed
+and verified privately before its already-approved future public schedule is set.
+Automatic approval remains unavailable until that private proof exists. Review
+never enables unreviewed posting as a side effect.
 
-App caps and Google project quota are distinct. Quota exhaustion delays new upload
-initialization for the project; channel upload limits affect the destination;
-transient failures back off; revoked consent requests reconnection. Paused or
-deleted sources stop unstarted work. Once upload bytes have been accepted, pause
-and deletion cannot reliably retract that action: continue reconciliation and
-show the actual result. Do not claim a remote video was removed.
+## Compatibility and storage
 
-Keep existing coarse post statuses for API compatibility and add a safe stage:
-queued, waiting_for_slot, uploading, processing, ready, waiting_for_quota,
-reconnect_required, needs_attention. Expose stage, confirmed-byte progress,
-next_attempt_at and a readable reason; exclude private transfer checkpoints.
+New-mode recording windows complete when review/publication work is durably handed
+off, so a publishing backlog does not pause capture or keep original chunks forever.
+Keep existing source overlap reservations and deleted-history tombstones. Review
+candidates and approved posts protect their snapshot media until normal retention
+or a user decision releases it; they do not duplicate the video bytes. Rejected
+clips stay available under the existing library retention policy.
 
-## Acceptance and rollout
+## Acceptance
 
-First deliverable: guided setup and one owner-requested private upload whose
-channel, finished processing, actual privacy, captions and A/V playback are
-verified. Public activation is a later explicit dashboard action. Test a worker
-restart mid-transfer, lost final response, duplicate queue delivery, quota wait,
-token revocation, deletion and pause races, two sources sharing one destination,
-and day-boundary pacing before claiming unattended readiness.
+Prove owner isolation; repeated approve/reject; stale preview; two reviewers and
+two live sources; pattern/DST/day-boundary reservations; private upload before any
+schedule; recovery after lost upload and lost schedule replies; late processing;
+queue pause; quota/backoff; cancellation/reconnect/deletion races; and a restart
+without duplicate videos. Verify the UI at desktop and 320px with demo data.
+Build final images with committed locks/base pins, scan them, drain active jobs
+before deployment, verify the live changelog, and keep public posting off until
+an owner-approved test is available.
 
-No new API charge is needed for fallback metadata. The feature should display its
-own upload attempts/limits, not an invented authoritative Google quota balance.
+## Primary sources checked 2026-11-19
 
-## Official references checked 2026-11-19
-
-- [Revision history](https://developers.google.com/youtube/data/revision_history): the November 2 update removes the old API-project-verification private-only upload restriction. Do not repeat the older blanket rule; still set explicit privacy.
-- [Quota and compliance](https://developers.google.com/youtube/data/guides/quota_and_compliance_audits): current default separate upload allowance is 100 `videos.insert` calls/day; verify the project's actual quota rather than using old per-upload quota assumptions.
-- [Resumable upload protocol](https://developers.google.com/youtube/data/guides/using_resumable_upload_protocol): persist the session, probe progress and resume from confirmed bytes.
-- [OAuth web server flow](https://developers.google.com/identity/protocols/oauth2/web-server) and [token lifetime](https://developers.google.com/identity/protocols/oauth2): offline refresh access; external Testing-mode refresh tokens with YouTube scopes expire after seven days.
-- [Sensitive-scope verification](https://developers.google.com/identity/protocols/oauth2/production-readiness/sensitive-scope-verification): verification requirements and personal-use exceptions are separate from upload privacy.
-- [Video resource](https://developers.google.com/youtube/data/reference/rest/v3/videos), [insert](https://developers.google.com/youtube/data/reference/rest/v3/videos/insert), and [list](https://developers.google.com/youtube/data/reference/rest/v3/videos/list): metadata byte limits, audience/privacy fields, processing and upload status.
-- [Three-minute Shorts](https://support.google.com/youtube/answer/15424877): current duration/aspect eligibility. A `#Shorts` hashtag alone does not validate the media.
+- [Resumable protocol](https://developers.google.com/youtube/data/guides/using_resumable_upload_protocol)
+- [Video resource / publishAt](https://developers.google.com/youtube/data/reference/rest/v3/videos): publishAt requires a private, never-published video; a past value publishes immediately.
+- [videos.update](https://developers.google.com/youtube/data/reference/rest/v3/videos/update): update scope and status-part replacement/removal behavior; preserve other mutable fields.
+- [videos.insert](https://developers.google.com/youtube/data/reference/rest/v3/videos/insert)
+- [Quota](https://developers.google.com/youtube/data/guides/quota_and_compliance_audits) and [revision history](https://developers.google.com/youtube/data/revision_history): current upload bucket and November private-only restriction change.
+- [OAuth web flow](https://developers.google.com/identity/protocols/oauth2/web-server), [token lifetime](https://developers.google.com/identity/protocols/oauth2), [verification](https://developers.google.com/identity/protocols/oauth2/production-readiness/sensitive-scope-verification)
+- [Shorts duration/aspect](https://support.google.com/youtube/answer/15424877)

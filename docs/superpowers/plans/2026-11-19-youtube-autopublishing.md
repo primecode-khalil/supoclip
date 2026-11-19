@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Execute natively unless the owner chooses delegation; follow the session's agent permissions.
 
-**Goal:** Connect a YouTube channel once and reliably publish new eligible live clips through a visible, paced queue.
+**Goal:** Review captioned clips one at a time, approve or reject them, and publish approved Shorts using configurable native YouTube schedules.
 
 **Architecture:** Extend the existing social provider/service/repository and recording pipeline. Add private durable transfer checkpoints and destination policies; keep existing post statuses and provider adapters compatible. Do not rebase onto current upstream main.
 
@@ -12,26 +12,34 @@
 
 ## Global Constraints
 
-- Preserve the fork's AGPL baseline; do not import post-license-change upstream code in this feature.
-- Keep the Linux single-script installer and dashboard configuration path.
-- Keep social credentials and resumable session URLs encrypted; never expose them in API JSON, logs, screenshots, or errors.
-- Default automatic publishing to disabled, visibility to private, and backfill to disabled.
-- For a newly created rule default to score >= 75, at most 3 posts per destination per day, and at least 60 minutes between uploads; these are adjustable engineering defaults, not performance claims.
-- Preserve existing saved policies and caps until the owner explicitly opts into a new publishing rule.
-- Accept only verified, playable 9:16 outputs with audio and duration > 0 and <= 180 seconds for this automatic Shorts workflow.
-- Do not make an extra LLM call mandatory for posting; use existing hook/transcript metadata as the fallback.
-- Never automatically start a second video upload when the first upload's outcome remains unknown.
-- Deleting a library item cancels its unstarted publication and does not delete an already uploaded YouTube video.
-- Pausing publishing, reaching its limits, or failing a social API call must not stop capture.
-- No public test post or activation of a real publishing rule without an explicit owner action.
+- Preserve the fork's AGPL baseline and the Linux installer/dashboard path.
+- Keep credentials and resumable session URLs encrypted and out of public JSON, logs, screenshots and errors.
+- Default new destination policies to review mode; no clip is uploaded or publicly scheduled until approved.
+- Default the posting interval to 360 minutes; also support weekly local posting times and a per-video custom time.
+- Preserve existing approved reservations when the posting pattern changes; apply the new pattern to subsequent approvals.
+- Interpret weekly posting times in the selected IANA timezone, handle DST, and reserve each destination/time at most once.
+- Reject past or too-near publication times; if processing misses a slot, move the approved clip to the next free slot in its approved pattern.
+- Upload scheduled clips privately, verify processing and channel identity, then set and verify YouTube's native publishAt.
+- Never automatically start a second video upload when the first outcome is unknown; reuse the durable session or video ID.
+- Approve and Reject require the signed owner's session; recording workers may add review candidates but cannot forge manual approval.
+- Reject and Undo do not delete library clips or recordings.
+- Freeze the render the owner approved; a changed preview version must be reviewed again.
+- Validate an approved Short as playable 9:16 video with audio, duration > 0 and <= 180 seconds.
+- No extra LLM call is mandatory for review, metadata or scheduling.
+- Pause intake/uploading independently of recording. Already confirmed YouTube schedules continue on YouTube unless explicitly cancelled.
+- Cancel a native schedule on YouTube before reporting it cancelled; failed cancellation must remain visible as still needing action.
+- Deleting a library item cancels its unstarted work and requests cancellation of any attached future native schedule; keep external video/history receipts.
+- Bound review intake to 200 pending items per destination and unattended approval to nine unpublished items; excess clips remain in the library.
+- No real public upload/schedule, account connection, or automatic-approval activation without the corresponding explicit owner action.
+
 
 ## Review Focus
 
-1. Crash between session creation and persistence must not send bytes before the checkpoint commits (Task 2).
-2. Changed render bytes or Unicode metadata must never be silently resumed/truncated incorrectly (Tasks 1 and 2).
-3. Two sources and duplicate workers targeting one account must share reservations, including across DST boundaries (Task 4).
-4. Pause, library deletion and account revocation racing a claimed upload must stop unstarted work and reconcile accepted bytes (Tasks 3 and 4).
-5. A lost completion response must not become a second public post, even after a deploy (Tasks 2, 3 and 6).
+1. Lost replies or worker restarts must reuse the same upload/video and approval receipt (Tasks 2, 5, 7).
+2. A preview changed after loading cannot be approved as if it were the same render (Task 4).
+3. Two simultaneous approvals and DST transitions must not assign conflicting slots (Task 4).
+4. A late upload must never send a past publishAt or publish immediately off-pattern (Task 5).
+5. Cancellation/deletion must not report success while a native YouTube schedule remains active (Tasks 5, 7).
 
 ## File boundaries
 
@@ -127,73 +135,91 @@ Keep `pending_handle` opaque; raw session URLs never go there.
 - [ ] Implement bounded processing polling and recovery dispatch through the existing workers. Separate quota wait, channel upload limit, retryable failure, reauth and unknown outcome. Refresh access with the actual token expiry. Reconcile accepted uploads after cancellation requests instead of claiming they were removed.
 - [ ] Re-run tests plus existing social publishing integration tests; require no provider regressions or duplicate initialization. Commit as `fix(youtube): verify processing and publication outcomes`.
 
-### Task 4: Shared destination rules, pacing and live-source integration
+### Task 4: Review decisions and posting patterns
 
 **Files:** Create `backend/src/services/social_publication_policy.py`,
 `backend/src/repositories/social_publication_policy_repository.py`,
+`backend/src/services/social_review_service.py`,
+`backend/src/repositories/social_review_repository.py`,
 `backend/src/migrations/sql/20261119_0002_social_publication_policies.sql`,
-`backend/tests/integration/test_social_publication_pacing.py`; modify
-`backend/src/recording/automation_schema.py`, `backend/src/recording/runner.py`,
-`backend/src/api/routes/social.py`, `backend/src/services/social_service.py`,
-`backend/src/repositories/social_repository.py`, `init.sql`, Prisma schema and
-matching migration, and recording publication/idempotency tests.
+`backend/tests/integration/test_social_publication_pacing.py`,
+`backend/tests/integration/test_social_review.py`,
+`backend/tests/unit/test_social_publication_policy.py`; modify social routes/service/repository,
+recording runner, media cleanup reference handling, init SQL and matching Prisma schema/migration.
 
-**Interfaces:** Owner-scoped `GET/PUT /social/accounts/{account_id}/automation`
-returns/accepts enabled, privacy, audience/category/disclosure, daily_limit,
-min_interval_minutes, timezone, min_score; enabled_at is server-owned. Add
-`reserve_publication_slot(db: AsyncSession, post_id: str, now: datetime) ->
-datetime | None`: lock the destination, return its next eligible UTC slot or None
-when blocked, and idempotently reuse an existing reservation. All manual/automatic
-YouTube uploads pass the same admission check. Store bounded quota deferrals by
-project separately from destination caps. Implement timezone day bounds with
-`zoneinfo`; no fixed 24-hour assumption across DST.
+**Interfaces:** Owner-scoped `GET/PUT /social/accounts/{account_id}/automation` with
+`mode: review|automatic`, enabled intake, paused uploads, timezone, min_score,
+category/audience/disclosure and `schedule: {kind: interval|weekly, interval_minutes,
+anchor_at, weekdays, times}`. New policies use review and 360 minutes. Add
+`GET /social/review?account_id=...`, `POST /social/review/import`,
+`POST /social/review/candidates`, and signed-session-only
+`POST /social/review/{id}/approve|reject|undo`. Approve consumes an expected
+render version and optional edited metadata/custom local time; it returns the
+same item/post/reservation on retries. Add
+`reserve_publication_slot(db: AsyncSession, review_id: str, now: datetime) -> datetime`.
 
-- [ ] Write real-DB concurrent tests: two sources share three daily slots, sixty-minute spacing, duplicate claims reuse one slot, manual posts count, restart does not reset usage, and DST/day rollover follows the configured timezone. Add eligibility tests for score 74/75, playable 9:16 with audio and duration bounds, and no old-clip backfill on enable/re-enable.
-- [ ] Add pause/deletion/quota tests asserting capture continues, unstarted jobs stop, existing overlap/tombstone protection remains, rejected media sends no API request, and saved policies retain their old cap until explicit opt-in.
-- [ ] Run `cd backend && .venv/bin/pytest tests/integration/test_social_publication_pacing.py tests/integration/test_recording_publication_limit.py tests/integration/test_recording_post_idempotency.py -q`; confirm failures for the new behavior.
-- [ ] Implement policies, transactional reservations and a stable logical-post deduplication key per immutable clip/render and destination; keep recording source-range overlap reservations. Add an independent publishing-enabled check before any new bytes. Create policy defaults only when the owner opts in; no migration silently activates posting or changes saved limits.
-- [ ] Repeat these tests and Task 3 lifecycle tests; require no double slots/uploads or capture stop at a posting cap. Commit as `feat(social): pace automatic YouTube publishing per channel`.
+- [ ] Write failing real-DB tests for defaults/ownership, approve/reject/undo, repeated and concurrent decisions, stale preview, stable post/slot receipts and deletion tombstones. Assert rejection and pending review enqueue no uploads.
+- [ ] Write interval, weekly, custom-time, DST (23/25-hour days), simultaneous approval and policy-edit tests with literal expected UTC times. Add real ffmpeg fixtures for vertical/audio/duration validation at approval.
+- [ ] Run the new unit/integration files with `--no-cov`; observe missing behavior before implementation.
+- [ ] Implement private review snapshots, account-locked reservations, 15-minute lead, upload pause, future-only automatic intake and explicit library import. Freeze approved media and persist idempotent decisions/posts. Review is default; automatic mode requires prior private proof and an explicit save.
+- [ ] Route new-mode live candidates to review and complete the recording window after durable handoff. Keep legacy source rules until adoption, overlap reservations and history tombstones. Bound pending review to 200 and unattended approved items to nine per destination.
+- [ ] Run review/pattern, existing recording limit/idempotency/history and social tests. Commit `feat(social): review clips and reserve configurable publication slots`.
 
-### Task 5: Dashboard controls and publication history
+### Task 5: Native YouTube schedules and cancellation
 
-**Files:** Modify `frontend/src/app/settings/social/page.tsx`,
-`frontend/src/components/scheduled-posts.tsx`,
-`frontend/src/components/recording/policy-form.tsx`,
-`frontend/src/lib/social.ts`, `frontend/src/components/youtube-setup.tsx`;
-create `frontend/src/components/youtube-automation.tsx`, corresponding Vitest
-tests and `frontend/e2e/youtube-autopublishing.spec.ts`; update the repository's
-localized messages where those screens use translations.
+**Files:** Modify `social/youtube.py`, `social/youtube_metadata.py`,
+`services/youtube_publish_service.py`, social service/repository, private upload
+repository/schema, `workers/job_queue.py`, `workers/cron_worker.py`, `workers/tasks.py`,
+clip/task deletion integration, and add native scheduling/cancellation integration tests.
 
-**Interfaces:** Use Tasks 1, 3 and 4 APIs. Show destination identity, explicit
-private/public choice, separate enable/pause, score/caps/spacing/timezone,
-next upload, safe upload progress, processing, quota/reconnect/attention reasons
-and final video link. A private test action calls existing manual post creation
-with privacy fixed to private; it never toggles automatic posting.
+**Interfaces:** `YouTubeProvider.update_video_status(access_token: str, video_id:
+str, status: dict) -> dict`; request `youtube.force-ssl` for schedule management.
+Private upload state adds desired/confirmed native publish time, schedule-request
+and cancellation flags; safe stages include scheduling, youtube_scheduled and
+cancelling. Approved native posts upload immediately with private visibility,
+independent of their future reserved public time.
 
-- [ ] Add component/browser assertions for disconnected setup, private test progress, public opt-in, pause without stopping recording, future-only enable explanation, rejected save preserving the form, reconnect and unknown-outcome copy. Assert all stages remain readable at 320px and keyboard focus survives refresh.
-- [ ] Run targeted Vitest and browser tests against mocked provider traffic; confirm missing controls/stages fail.
-- [ ] Build the controls using existing UI components and API proxy, keeping transfer internals private. Distinguish Ready (private) from Published. Do not promise remote deletion for a library item.
-- [ ] Run `make check`, frontend targeted tests and `pnpm exec playwright test e2e/youtube-autopublishing.spec.ts` in the configured test environment. Capture demo-data screenshot and short workflow video for the eventual PR. Commit as `feat(social): manage YouTube automation from the dashboard`.
+- [ ] Write failing tests proving private upload/processing precede schedule creation, returned/native status is verified, lost update responses reuse one video, overdue slots move forward, and confirmed schedules publish while the app was offline.
+- [ ] Add cancellation, revoke/reconnect, library deletion and already-public race tests; assert no cancelled label while publishAt still exists and no second upload on any retry.
+- [ ] Implement status updates preserving other mutable status fields; reconcile before repeating an update. Atomically persist scheduled/published/cancelled truth. Reconcile existing IDs without needing deleted local media.
+- [ ] Dispatch YouTube network jobs through the existing API-host cron worker queue; recover queued/due jobs from DB with bounded shared project/bucket quota deferrals. Avoid holding transactions during network/media I/O.
+- [ ] Run native schedule/cancellation, durable upload, all social and recording deletion regressions. Commit `feat(youtube): manage verified native publication schedules`.
 
-### Task 6: Release rehearsal and private end-to-end proof
+### Task 6: Sequential review dashboard
 
-**Files:** Update `docs/configuration.md`, `docs/app-guide.md`, `CHANGELOG.md`, and
-extend the existing Linux installer documentation with Google setup and recovery.
-Use the existing deployment scripts and final-image security checks.
+**Files:** Create `frontend/src/app/publishing/page.tsx`, focused review/player,
+pattern editor and queue components/tests, and `frontend/e2e/youtube-autopublishing.spec.ts`;
+modify app navigation, social settings/setup, safe client types and existing scheduling UI.
 
-- [ ] Run all changed backend suites with a dedicated PostgreSQL/Redis setup, the full frontend test suite, `make check`, changelog tests, and targeted browser workflows. Report unrelated baseline failures separately; do not call a failed full suite green.
-- [ ] Build fresh final images with committed dependency locks and patched image pins; require zero failing critical findings. Rehearse both additive migrations and restoration of the previous application version against a disposable database.
-- [ ] Prove an upload interrupted by worker restart recovers the same session/video, a lost final response does not start another insert, quota deferral resumes, and a duplicate queue message cannot send a second video. Confirm dashboard reasons and capture independence.
-- [ ] Review the combined diff, release notes and demo visual proof. Before a production restart, check/drain queued or processing tasks and ongoing ARQ jobs; record rollback source/images and verify the live changelog after rollout.
-- [ ] When the owner completes OAuth consent and explicitly requests the private test, upload one approved clip. Verify the connected destination, finished processing, actual private visibility, captions, A/V sync and returned URL. Keep public automation off until explicit owner activation.
-- [ ] Commit documentation/evidence references as `docs(social): document YouTube setup and verified rollout`. Report verified behavior and remaining external setup accurately; do not claim 100% autonomy before the recovery/private test gates pass.
+**Interfaces:** Use Tasks 4–5 APIs. Show one actual rendered vertical clip, editable
+metadata, destination and proposed local slot. Approve & schedule and Reject
+advance on success; Later does not reject; Undo restores rejected review. Keyboard
+A/R ignores typing, repeated events and in-flight decisions. Queue shows app work
+versus confirmed YouTube scheduling, actual video links, reasons, cancel and
+custom reschedule controls. Pattern changes apply to future approvals.
+
+- [ ] Write failing component/browser tests for sequential decisions, double-clicks, edit/typing shortcuts, undo, API errors preserving state, pattern/timezone saves and native queue/cancellation states.
+- [ ] Build the page with existing components and signed API proxies, including connection guidance and explicit import of existing clips. Keep automatic mode off by default and show public schedule time on the approval action.
+- [ ] Run targeted Vitest, `make check` and Playwright workflows at desktop/320px. Capture demo-data screenshot and short workflow video for the PR. Commit `feat(social): add a one-by-one Shorts review studio`.
+
+### Task 7: Release rehearsal and private proof
+
+**Files:** Update configuration/app/installer docs and root changelog; use existing
+production deploy and image security scripts.
+
+- [ ] Run all changed backend suites with dedicated PostgreSQL/Redis, full backend/frontend checks, changelog tests and targeted browser workflows. Report any baseline failures accurately.
+- [ ] Rehearse schema changes and previous-app restoration against a disposable database. Build fresh final images with committed locks/base pins and pass critical image scans.
+- [ ] Prove restart/lost reply recovery and no duplicate upload or schedule; test late slots, quota, paused intake/uploads and cancellation with accepted media.
+- [ ] Obtain one fresh whole-branch review as required by executing-plans; fix important findings with reproducing tests, review release evidence and collect rulings.
+- [ ] Drain active application/ARQ jobs before a later VPS restart, retain source/image rollback points and verify health/live changelog. Do not connect an account or create a real public schedule without owner action.
+- [ ] Once the owner completes consent and explicitly approves a private test or a scheduled clip, verify actual channel, processing, privacy/schedule, captions and A/V playback. Until then report external setup/test gates as pending rather than claiming live YouTube proof.
+- [ ] Commit documentation/evidence references, push/link the PR and report verified behavior, remaining setup and any deferred limitations.
 
 ## Self-review
 
-The design's setup, media/metadata validation, private checkpoint storage,
-resumable recovery, processing/visibility, pacing, future-only activation,
-deletion/pause behavior and deployment proof map respectively to Tasks 1–6.
-The five review-focus conditions each have explicit tests above. Interfaces share
-one orchestration entrypoint and one destination reservation function; existing
-provider/post APIs remain compatible. The maintenance backport and external
-Google consent/public activation remain explicit dependencies, not completed work.
+Tasks 1–3 remain the completed foundation. The owner's review-first steering
+supersedes the old direct-auto-post pacing proposal before Task 4 implementation.
+The review/decision, cadence, immutable media, native private-then-schedule,
+recovery/cancellation, dashboard and deployment requirements map to Tasks 4–7.
+Review Focus conditions have explicit tests in their owning tasks. Real consent
+and real public scheduling remain explicit owner actions, not completed work.
