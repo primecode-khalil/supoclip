@@ -590,6 +590,8 @@ async def test_disabled_platform_blocks_oauth_before_state_is_created(service):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("is_admin,expected", [(True, True), (False, False)])
 async def test_admin_trial_allows_scheduling_without_changing_billing(service, monkeypatch, is_admin, expected):
+    service.config.self_host = False
+    service.config.monetization_enabled = True
     service.config.social_publishing_access = "admins"
     service.db = _UsersDb({"user-1": {"is_admin": is_admin, "email": "user@example.com"}})
 
@@ -674,6 +676,8 @@ async def test_create_post_queues_immediately_and_snapshots_clip(service):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("plan,can_schedule", [("pro", False), ("scale", True)])
 async def test_scheduling_follows_the_plan_but_publishing_now_does_not(service, monkeypatch, plan, can_schedule):
+    service.config.self_host = False
+    service.config.monetization_enabled = True
     async def summary(_self, _user_id):
         return {"plan": plan, "can_schedule_posts": can_schedule}
 

@@ -2,6 +2,14 @@ export type SocialProviderId = "youtube" | "tiktok" | "instagram";
 
 export type SocialPrivacyLevel = "public" | "unlisted" | "private";
 
+export interface YouTubeSetupStatus {
+  configured: boolean;
+  redirect_uri: string;
+  connections: (SocialConnection & { refresh_access_available: boolean; permissions_complete: boolean })[];
+  refresh_access_available: boolean;
+  private_test_completed: boolean;
+}
+
 export type SocialPostStatus =
   | "scheduled"
   | "queued"
@@ -49,6 +57,13 @@ export interface SocialPost {
   social_account_id: string | null;
   provider: SocialProviderId;
   status: SocialPostStatus;
+  provider_options?: { native_schedule?: boolean; cancel_requested?: boolean; delete_remote?: boolean; source_replaced?: boolean };
+  stage?: "deleting" | "deleted" | "paused" | "scheduling" | "youtube_scheduled" | "cancelling" | "cancelled" | "queued" | "waiting_for_slot" | "uploading" | "processing" | "ready" | "waiting_for_quota" | "reconnect_required" | "needs_attention" | null;
+  confirmed_bytes?: number | null;
+  total_bytes?: number | null;
+  next_attempt_at?: string | null;
+  reason_code?: string | null;
+  actual_visibility?: SocialPrivacyLevel | null;
   scheduled_for: string | null;
   title: string | null;
   caption: string | null;
@@ -184,4 +199,48 @@ export function durationBucketLabel(bucket: string): string {
     default:
       return bucket;
   }
+}
+
+export interface PublicationPattern {
+  kind: "interval" | "weekly";
+  interval_minutes: number;
+  anchor_at: string | null;
+  weekdays: number[];
+  times: string[];
+}
+export interface PublicationPolicy {
+  mode: "review" | "automatic";
+  enabled: boolean;
+  uploads_paused: boolean;
+  timezone: string;
+  min_score: number;
+  category_id: string;
+  made_for_kids: boolean;
+  contains_synthetic_media: boolean | null;
+  schedule: PublicationPattern;
+}
+export interface PublicationSettings {
+  policy: PublicationPolicy;
+  next_slot: string;
+  legacy: boolean;
+  pending_review: number;
+  private_test_completed: boolean;
+  permissions_complete: boolean;
+}
+export interface ReviewItem {
+  id: string;
+  account_id: string;
+  task_id: string | null;
+  clip_id: string | null;
+  status: "pending" | "approved" | "rejected" | "cancelled";
+  post_id: string | null;
+  version: string;
+  title: string;
+  caption: string;
+  youtube_tags: string[];
+  score: number | null;
+  duration: number | null;
+  source_title: string | null;
+  video_url: string | null;
+  publish_at: string | null;
 }

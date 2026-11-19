@@ -18,9 +18,11 @@ from time import perf_counter
 
 from arq.constants import job_key_prefix, in_progress_key_prefix, expires_extra_ms
 from ..analytics import capture_event, elapsed_seconds, source_kind
+from ..publishing_tags import ground_youtube_tags
 from ..broll import BRollSession
 from ..workers.job_queue import JobQueue
 from ..repositories.task_repository import TaskRepository
+from ..repositories.task_idempotency_repository import TaskIdempotencyReplay
 from ..repositories.minute_usage_repository import charged_duration
 from ..repositories.source_repository import SourceRepository
 from ..repositories.clip_repository import ClipRepository
@@ -355,12 +357,17 @@ class TaskService(ClipEditingMixin):
         processing_mode: str = "fast",
         source_duration_seconds: Optional[int] = None,
         upload_request_key: Optional[str] = None,
+        initial_source_metadata: Optional[Dict[str, Any]] = None,
         workflow: str = "highlights",
         workflow_options: Optional[Dict[str, Any]] = None,
+        idempotency: Optional[tuple[str, str]] = None,
     ) -> str:
         """
         Create a new task with associated source.
         Returns the task ID.
+
+        With ``idempotency`` (key, request hash), raises ``TaskIdempotencyReplay``
+        when a concurrent request with the same key created its task first.
         """
         self.reused_upload_task = False
         self.reused_upload_job_id = None
@@ -402,31 +409,38 @@ class TaskService(ClipEditingMixin):
         )
 
         # Create task
-        task_id = await self.task_repo.create_task(
-            self.db,
-            user_id=user_id,
-            source_id=source_id,
-            status="queued",  # Changed from "processing" to "queued"
-            font_family=font_family,
-            font_size=font_size,
-            font_color=font_color,
-            caption_template=caption_template,
-            include_broll=include_broll,
-            processing_mode=processing_mode,
-            source_duration_seconds=source_duration_seconds,
-            charge_minutes=self.config.monetization_enabled,
-            workflow=workflow,
-            workflow_options=workflow_options,
-        )
-
+        metadata = dict(initial_source_metadata or {})
         if upload_request_key and url.startswith("upload://"):
-            metadata: Dict[str, Any] = {"upload_request_key": upload_request_key}
+            metadata["upload_request_key"] = upload_request_key
             from ..repositories.upload_repository import get_stored_upload
 
             stored = await get_stored_upload(self.db, url)
             if stored is not None and stored.storage_reference:
                 metadata["storage_reference"] = stored.storage_reference
-            await self.task_repo.save_source_metadata(self.db, task_id, metadata)
+
+        try:
+            task_id = await self.task_repo.create_task(
+                self.db,
+                user_id=user_id,
+                source_id=source_id,
+                status="queued",  # Changed from "processing" to "queued"
+                font_family=font_family,
+                font_size=font_size,
+                font_color=font_color,
+                caption_template=caption_template,
+                include_broll=include_broll,
+                processing_mode=processing_mode,
+                source_duration_seconds=source_duration_seconds,
+                charge_minutes=self.config.monetization_enabled,
+                workflow=workflow,
+                workflow_options=workflow_options,
+                **({"source_metadata": metadata} if metadata else {}),
+                **({"idempotency": idempotency} if idempotency else {}),
+            )
+        except TaskIdempotencyReplay:
+            # The task insert rolled back. Drop the source made for it.
+            await self.source_repo.delete_unused_source(self.db, source_id)
+            raise
 
         logger.info(f"Created task {task_id} for user {user_id}")
         return task_id
@@ -861,6 +875,12 @@ class TaskService(ClipEditingMixin):
                         "workflow_meta": meta or None,
                     }
 
+                suggested_tags = segment.get("youtube_tags", (segment.get("workflow_meta") or {}).get("youtube_tags"))
+                if suggested_tags is not None:
+                    meta = copy.deepcopy(workflow_fields.get("workflow_meta") or {})
+                    meta["youtube_tags"] = ground_youtube_tags(suggested_tags, clip_info.get("text") or "")
+                    workflow_fields["workflow_meta"] = meta
+
                 async with self._processing_transaction(task_id):
                     await check_cancelled()
                     clip_order = max(clip_ids_by_order, default=0) + 1
@@ -1270,8 +1290,11 @@ class TaskService(ClipEditingMixin):
         return await self.task_repo.get_user_tasks(self.db, user_id, limit)
 
     @serialized_task_edit
-    async def delete_task(self, task_id: str) -> None:
+    async def delete_task(self, task_id: str, *, social_post_ids: list[str] | None = None) -> None:
         """Delete a task and all its associated clips."""
+        from ..recording.history import clear_deleted_task_history
+
+        await clear_deleted_task_history(self.db, task_id)
         task = await self.task_repo.get_task_by_id(self.db, task_id)
         source_url = task.get("source_url") if task else None
         if source_url and source_url.startswith("upload://"):
@@ -1285,7 +1308,7 @@ class TaskService(ClipEditingMixin):
             if video_id:
                 await queue_delete(self.db, MediaStorage().youtube_metadata_reference(video_id))
         # Delete all clips for this task
-        await self.clip_repo.delete_clips_by_task(self.db, task_id)
+        await self.clip_repo.delete_clips_by_task(self.db, task_id,preserve_native=False,acknowledged_post_ids=social_post_ids)
 
         # Delete the task
         await self.task_repo.delete_task(self.db, task_id)

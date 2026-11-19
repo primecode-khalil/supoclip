@@ -4,6 +4,7 @@ Task repository - handles all database operations for tasks.
 
 from .edit_transaction import commit_unless_editing
 from .minute_usage_repository import charged_duration, record_minute_usage, refund_failed_minute_usage
+from .task_idempotency_repository import TaskIdempotencyReplay, claim_key
 from sqlalchemy.exc import DBAPIError
 
 
@@ -38,8 +39,15 @@ class TaskRepository:
         charge_minutes: bool = False,
         workflow: str = "highlights",
         workflow_options: Optional[Dict[str, Any]] = None,
+        source_metadata: Optional[Dict[str, Any]] = None,
+        idempotency: Optional[tuple[str, str]] = None,
     ) -> str:
-        """Create a new task and return its ID."""
+        """Create a new task and return its ID.
+
+        ``idempotency`` is ``(key, request_hash)``. The key is bound in the same
+        transaction as the task and its charge; if another request already
+        holds it, nothing is created and ``TaskIdempotencyReplay`` is raised.
+        """
         source_duration_seconds = charged_duration(source_duration_seconds)
         task_id = str(uuid4())
         params = {
@@ -54,6 +62,7 @@ class TaskRepository:
             "include_broll": include_broll,
             "processing_mode": processing_mode,
             "source_duration_seconds": source_duration_seconds,
+            "source_metadata": json.dumps(source_metadata or {}),
         }
         try:
             if workflow == "highlights" and not workflow_options:
@@ -64,12 +73,12 @@ class TaskRepository:
                         INSERT INTO tasks (
                             id, user_id, source_id, status, font_family, font_size, font_color,
                             caption_template, include_broll, processing_mode,
-                            source_duration_seconds, created_at, updated_at
+                            source_duration_seconds, source_metadata, created_at, updated_at
                         )
                         VALUES (
                             :task_id, :user_id, :source_id, :status, :font_family, :font_size, :font_color,
                             :caption_template, :include_broll, :processing_mode,
-                            :source_duration_seconds, NOW(), NOW()
+                            :source_duration_seconds, CAST(:source_metadata AS JSONB), NOW(), NOW()
                         )
                         RETURNING id
                     """),
@@ -82,12 +91,12 @@ class TaskRepository:
                         INSERT INTO tasks (
                             id, user_id, source_id, status, font_family, font_size, font_color,
                             caption_template, include_broll, processing_mode,
-                            source_duration_seconds, workflow, workflow_options, created_at, updated_at
+                            source_duration_seconds, workflow, workflow_options, source_metadata, created_at, updated_at
                         )
                         VALUES (
                             :task_id, :user_id, :source_id, :status, :font_family, :font_size, :font_color,
                             :caption_template, :include_broll, :processing_mode,
-                            :source_duration_seconds, :workflow, CAST(:workflow_options AS JSONB), NOW(), NOW()
+                            :source_duration_seconds, :workflow, CAST(:workflow_options AS JSONB), CAST(:source_metadata AS JSONB), NOW(), NOW()
                         )
                         RETURNING id
                     """),
@@ -98,7 +107,9 @@ class TaskRepository:
                 raise RuntimeError("Failed to create task: no ID returned")
             if charge_minutes:
                 await record_minute_usage(db, user_id, task_id, source_duration_seconds)
-            # The task and its charge become visible together, before enqueueing.
+            if idempotency and not await claim_key(db, user_id, idempotency[0], idempotency[1], task_id):
+                raise TaskIdempotencyReplay()
+            # The task, its charge and its key become visible together, before enqueueing.
             await commit_unless_editing(db)
         except Exception:
             await db.rollback()
@@ -164,7 +175,10 @@ class TaskRepository:
 
     @staticmethod
     async def find_recent_upload_task(db: AsyncSession, user_id: str, key: str):
-        """In-progress upload task for this request, or one completed in the last 2 minutes."""
+        """Explicit keyed requests remain replayable for the task's lifetime.
+
+        Unkeyed interactive submissions retain the existing two-minute behavior.
+        """
         if not key:
             return None
         result = await db.execute(
@@ -174,6 +188,8 @@ class TaskRepository:
                 WHERE t.user_id = :user
                   AND t.source_metadata->>'upload_request_key' = :key
                   AND (
+                    t.source_metadata->>'durable_upload_request' = 'true'
+                    OR
                     t.status IN ('queued', 'processing', 'pending')
                     OR (t.status = 'completed' AND t.completed_at > NOW() - INTERVAL '2 minutes')
                   )

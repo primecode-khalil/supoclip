@@ -15,6 +15,8 @@ from typing import Any, Dict, Optional
 from urllib.parse import urlencode
 
 from ..config import Config, get_config
+from .youtube_metadata import build_youtube_metadata
+from .youtube_upload import YouTubeUploadProtocol, YouTubeUploadError, raise_youtube_error
 from .base import (
     DEFAULT_HTTP_TIMEOUT,
     AccountProfile,
@@ -37,6 +39,7 @@ API_BASE = "https://www.googleapis.com/youtube/v3"
 UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
 
 SCOPES = (
+    "https://www.googleapis.com/auth/youtube.force-ssl",
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube.readonly",
 )
@@ -51,7 +54,7 @@ TITLE_MAX_LENGTH = 100
 DESCRIPTION_MAX_LENGTH = 5000
 
 
-class YouTubeProvider(SocialProvider):
+class YouTubeProvider(YouTubeUploadProtocol, SocialProvider):
     name = "youtube"
     display_name = "YouTube Shorts"
 
@@ -113,6 +116,8 @@ class YouTubeProvider(SocialProvider):
             timeout=DEFAULT_HTTP_TIMEOUT,
         )
         if response.status_code >= 400:
+            if response.status_code == 429 or response.status_code >= 500:
+                raise SocialProviderError("Google token refresh is temporarily unavailable.", retryable=True)
             raise SocialProviderError(
                 f"YouTube token refresh failed: {self._extract_error(response)}",
                 reauth=True,
@@ -186,27 +191,8 @@ class YouTubeProvider(SocialProvider):
 
     # -- publishing -----------------------------------------------------
     def publish(self, access_token: str, request: PublishRequest) -> PublishResult:
-        privacy = PRIVACY_MAP.get(request.privacy_level, "private")
-        title = (request.title or "").strip()[:TITLE_MAX_LENGTH] or "Untitled clip"
-        hashtags = list(request.hashtags)
-        if not any(tag.lower().lstrip("#") == "shorts" for tag in hashtags):
-            hashtags.append("Shorts")
-        description = build_caption(request.caption, hashtags, DESCRIPTION_MAX_LENGTH)
-        tags = [tag.lstrip("#") for tag in hashtags if tag.strip("# ")][:30]
-
+        metadata = build_youtube_metadata(request)
         file_size = os.path.getsize(request.file_path)
-        metadata = {
-            "snippet": {
-                "title": title,
-                "description": description,
-                "tags": tags,
-                "categoryId": "22",
-            },
-            "status": {
-                "privacyStatus": privacy,
-                "selfDeclaredMadeForKids": False,
-            },
-        }
         init_response = self.http.post(
             UPLOAD_URL,
             params={"uploadType": "resumable", "part": "snippet,status"},
@@ -248,6 +234,32 @@ class YouTubeProvider(SocialProvider):
             external_url=f"https://www.youtube.com/shorts/{video_id}",
             raw=payload,
         )
+
+    def fetch_video_status(self, access_token: str, video_id: str) -> dict[str, Any]:
+        response = self._upload_request("get", f"{API_BASE}/videos", access_token,
+            params={"part": "status,processingDetails,snippet", "id": video_id})
+        if response.status_code != 200:
+            raise_youtube_error(response)
+        try:
+            items = response.json().get("items") or []
+            return next((item for item in items if item.get("id") == video_id), {})
+        except (ValueError, AttributeError, TypeError):
+            raise YouTubeUploadError("YouTube's processing status is temporarily unavailable.", "temporary", retryable=True) from None
+
+    def delete_video(self, access_token: str, video_id: str) -> None:
+        response = self._upload_request("delete", f"{API_BASE}/videos", access_token, params={"id":video_id})
+        if response.status_code not in (204,404):
+            raise_youtube_error(response)
+
+    def update_video_status(self, access_token: str, video_id: str, status: dict) -> dict:
+        response = self._upload_request("put", f"{API_BASE}/videos", access_token,
+            params={"part": "status"}, json={"id": video_id, "status": status})
+        if response.status_code != 200:
+            raise_youtube_error(response)
+        try:
+            return response.json()
+        except ValueError:
+            raise YouTubeUploadError("YouTube's update response is unavailable; the same video will be checked.", "temporary", retryable=True) from None
 
     # -- analytics ------------------------------------------------------
     def fetch_metrics(

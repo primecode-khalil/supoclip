@@ -1,0 +1,20 @@
+# Only select behind a trusted TLS ingress with HTTP_BIND on its private network.
+:80 {
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+	handle_path /backend/* {
+		reverse_proxy backend:8000 {
+			header_up X-Forwarded-Proto https
+			flush_interval -1
+		}
+	}
+	handle {
+		encode zstd gzip
+		reverse_proxy frontend:3107 {
+			header_up X-Forwarded-Proto https
+		}
+	}
+}

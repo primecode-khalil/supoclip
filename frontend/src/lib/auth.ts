@@ -1,4 +1,6 @@
 import { betterAuth } from "better-auth";
+import { APIError, createAuthMiddleware } from "better-auth/api";
+import { singleUserSetupEnabled, validInitialSetupToken } from "@/lib/single-user-setup";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import prisma from "@/lib/prisma";
 import { nextCookies } from "better-auth/next-js";
@@ -35,6 +37,16 @@ const trustedOrigins = getAuthTrustedOrigins({
 });
 
 export const auth = betterAuth({
+  hooks: {
+    before: createAuthMiddleware(async (ctx) => {
+      if (singleUserSetupEnabled() && ctx.path === "/sign-up/email") {
+        const token = ctx.headers?.get("x-supoclip-setup-token");
+        if (!validInitialSetupToken(token, process.env.INITIAL_SETUP_TOKEN) || await prisma.user.count() !== 0) {
+          throw new APIError("FORBIDDEN", { message: "Registration is unavailable. Check the installation setup token." });
+        }
+      }
+    }),
+  },
   database: prismaAdapter(prisma, {
     provider: "postgresql",
   }),

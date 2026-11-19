@@ -25,7 +25,7 @@ def _copy(count=6, ends_on=None):
     return SeriesCopy(
         series_title="The bank calls back",
         parts=[
-            PartCopy(part=number, title=f"Title {number}", delivers=f"delivers {number}",
+            PartCopy(youtube_tags=[],part=number, title=f"Title {number}", delivers=f"delivers {number}",
                      ends_on=(ends_on or {}).get(number, "" if number == count else f"q{number}"), post_caption=f"caption {number}")
             for number in range(1, count + 1)
         ],
@@ -70,7 +70,10 @@ def _whole_story(monkeypatch, answers, *, sentences=120, chapters=None, language
 
 @pytest.mark.asyncio
 async def test_whole_story_series_maps_parts_to_locked_segments(monkeypatch):
-    pi, model = _whole_story(monkeypatch, {"SeriesDraft": [_draft()], "SeriesCritique": [SHIP], "SeriesCopy": [_copy()]})
+    copy = _copy()
+    for part in copy.parts:
+        part.youtube_tags = ["w1", "Minecraft"]
+    pi, model = _whole_story(monkeypatch, {"SeriesDraft": [_draft()], "SeriesCritique": [SHIP], "SeriesCopy": [copy]})
 
     segments, plan = await plan_series(pi)
 
@@ -88,6 +91,7 @@ async def test_whole_story_series_maps_parts_to_locked_segments(monkeypatch):
         meta = segment["workflow_meta"]
         assert meta["planned"] and meta["ranges"] == segment["source_ranges"] and meta["part_count"] == 6
         assert meta["series_title"] == "The bank calls back"
+        assert meta["youtube_tags"] == ["w1"]
     assert segments[0]["hook_title"] == "Part 1: Title 1"
     assert segments[0]["workflow_meta"]["ends_on"] == "q1"
     assert segments[-1]["workflow_meta"]["ends_on"] == ""
@@ -157,7 +161,7 @@ async def test_critique_moves_an_end_and_moved_parts_get_new_copy(monkeypatch):
     )
     copy = SeriesCopy(
         series_title="New title",
-        parts=[PartCopy(part=n, title=f"Fresh {n}", delivers="d", ends_on="q", post_caption="c") for n in range(1, 7)],
+        parts=[PartCopy(youtube_tags=[],part=n, title=f"Fresh {n}", delivers="d", ends_on="q", post_caption="c") for n in range(1, 7)],
     )
     pi, model = _whole_story(
         monkeypatch, {"SeriesDraft": [_draft()], "SeriesCritique": [critique], "SeriesCopy": [copy]}
@@ -332,7 +336,7 @@ async def test_no_storyline_long_enough_is_no_story(monkeypatch):
 async def test_without_a_draft_the_series_is_partitioned_and_retitled(monkeypatch):
     copy = SeriesCopy(
         series_title="Fallback",
-        parts=[PartCopy(part=n, title=f"Auto {n}", delivers="", ends_on="", post_caption="") for n in range(1, 11)],
+        parts=[PartCopy(youtube_tags=[],part=n, title=f"Auto {n}", delivers="", ends_on="", post_caption="") for n in range(1, 11)],
     )
     pi, model = _whole_story(
         monkeypatch,
@@ -493,7 +497,7 @@ async def test_flat_joins_move_to_a_better_end_or_lose_their_invented_cliffhange
         joins=[_join(1, "none", False), _join(2, "none", False, better_end=42), _join(3)],
     )
     copy = SeriesCopy(
-        series_title="New", parts=[PartCopy(part=n, title=f"T{n}", delivers="d", ends_on=f"q{n}", post_caption="c") for n in range(1, 7)],
+        series_title="New", parts=[PartCopy(youtube_tags=[],part=n, title=f"T{n}", delivers="d", ends_on=f"q{n}", post_caption="c") for n in range(1, 7)],
     )
     pi, model = _whole_story(monkeypatch, {"SeriesDraft": [_draft()], "SeriesCritique": [critique], "SeriesCopy": [copy]})
 
@@ -783,7 +787,7 @@ async def test_final_copy_always_runs_is_repaired_and_never_invents_a_cliffhange
     def copy(ends):
         return SeriesCopy(
             series_title="New",
-            parts=[PartCopy(part=n, title=title, delivers="d", ends_on=end, post_caption="c")
+            parts=[PartCopy(youtube_tags=[],part=n, title=title, delivers="d", ends_on=end, post_caption="c")
                    for n, (title, end) in enumerate(ends, start=1)],
         )
 

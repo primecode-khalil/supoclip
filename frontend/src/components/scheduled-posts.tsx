@@ -86,7 +86,8 @@ export function ScheduledPosts({ sectionHeadingClassName }: { sectionHeadingClas
     try {
       const response = await fetch(`/api/social/posts/${post.id}/cancel`, { method: "POST" });
       if (response.ok) {
-        toast.success(t("toasts.scheduleCancelled"));
+        const result = await response.json();
+        toast.success(result.post?.status === "cancelled" ? t("toasts.scheduleCancelled") : "Cancellation requested. Check Publishing for confirmation.");
       } else {
         const data = await response.json().catch(() => ({}));
         toast.error(typeof data?.detail === "string" ? data.detail : t("toasts.cancelFailed"));

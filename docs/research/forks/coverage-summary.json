@@ -1,0 +1,21 @@
+{
+  "listed_forks": 731,
+  "reachable_forks": 725,
+  "inaccessible_forks": [
+    "nexuscreativ/supoclip",
+    "lucaszhu-hue/supoclip",
+    "hgh9831/supoclip",
+    "tuanhongcao-stack/supoclip",
+    "Arthur-lehnernoel-hub/supoclip",
+    "patopt/supoclip"
+  ],
+  "descendant_forks": 3,
+  "branch_refs": 11331,
+  "distinct_heads": 616,
+  "upstream_reachable_heads": 354,
+  "nonupstream_heads": 262,
+  "compared_heads": 257,
+  "no_common_ancestor_heads": 5,
+  "capped_comparison_heads": 10,
+  "scope": "Public listed forks plus recursively discovered descendants; default and non-default advertised branches. Source audit is targeted, not execution of every fork."
+}

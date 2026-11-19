@@ -117,6 +117,7 @@ class _Candidate:
     duplicate: bool = False  # the rerank says a better clip makes the same point
     weak: bool = False  # the rerank says it needs another clip to make sense
     moment: int = -1  # which extracted moment this came from, so halves of one story can rejoin
+    youtube_tags: list[str] = field(default_factory=list)
 
     @property
     def reserve_only(self) -> bool:
@@ -630,6 +631,7 @@ def gate_candidates(
                 skips=span_skips,
                 retitle=moved or not has_evidence,
                 moment=id(moment),
+                youtube_tags=moment.youtube_tags,
             )
         )
     return candidates
@@ -708,6 +710,7 @@ def merge_adjacent(
                     skips=skips,
                     retitle=True,
                     moment=previous.moment,
+                    youtube_tags=[*previous.youtube_tags, *candidate.youtube_tags],
                 )
                 continue
         merged.append(candidate)
@@ -1179,7 +1182,7 @@ def grounded_title(index: UnitIndex, candidate: _Candidate) -> str:
 
 def _segment(pi: PlanInput, candidate: _Candidate, canonical: str, budget: Budget, *, reserve: bool) -> dict[str, Any]:
     index = pi.index
-    meta: dict[str, Any] = {"topic": canonical, "topic_relevance": candidate.relevance, "why": candidate.why}
+    meta: dict[str, Any] = {"topic": canonical, "topic_relevance": candidate.relevance, "why": candidate.why, "youtube_tags": candidate.youtube_tags}
     if reserve:
         meta["reserve"] = True
     ranges = index.ranges_for(candidate.first, candidate.last, candidate.skips)

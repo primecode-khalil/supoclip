@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily SupoClip database backup
+
+[Timer]
+OnCalendar=*-*-* 03:15:00 UTC
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

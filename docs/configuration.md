@@ -214,9 +214,18 @@ Fonts and transitions are configured by mounted files rather than environment va
 | `REDIS_HOST` | `redis` in Docker, `localhost` in code | Redis hostname |
 | `REDIS_PORT` | `6379` | Redis port |
 | `DATABASE_URL` | injected by Docker | PostgreSQL connection string |
+| `DATABASE_POOL_SIZE` | `5` | Maximum retained connections per backend process |
+| `DATABASE_MAX_OVERFLOW` | `0` | Additional temporary connections per backend process |
+| `DATABASE_POOL_TIMEOUT_SECONDS` | `10` | Wait before a busy pool returns a retryable response |
+| `DATABASE_IDLE_SESSION_TIMEOUT_SECONDS` | `600` | PostgreSQL closes idle pooled sessions; `0` disables this |
 | `POSTGRES_DB` | `supoclip` | PostgreSQL database name |
 | `POSTGRES_USER` | `supoclip` | PostgreSQL username |
 | `POSTGRES_PASSWORD` | `supoclip_password` | PostgreSQL password |
+
+Budget database connections across every API, recorder, worker and frontend process.
+Advisory lock connections are separate from these serving pools. Leave headroom
+below PostgreSQL's `max_connections`; increasing every process's pool multiplies
+the total rather than sharing one limit.
 
 ## Self-Host and Monetization Settings
 
@@ -613,3 +622,8 @@ and network transfer are billed separately.
 The publishing and scheduling form drafts editable captions with `claude-haiku-5-5`.
 This requires `ANTHROPIC_API_KEY`, independently of the clip-selection `LLM`.
 Drafting failures keep the caption editable and posting available. No migration is required.
+
+## Review and native YouTube scheduling
+
+See [YouTube publishing](youtube-publishing.md) for one-by-one review, configurable
+posting patterns, Google OAuth setup, recovery and cancellation.

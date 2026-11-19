@@ -97,8 +97,12 @@ model User {
   pending_plan            String? @db.VarChar(20)
   pending_plan_invoice_id String? @db.VarChar(255)
 
+  recording_channels RecordingChannel[]
+  social_post_requests SocialPostRequest[]
+
   // Relationships
   stripe_migration StripeAccountMigration?
+  task_idempotency_keys TaskIdempotencyKey[]
   tasks         Task[]
   sessions      Session[]
   accounts      Account[]
@@ -110,6 +114,10 @@ model User {
   social_accounts     SocialAccount[]
   social_oauth_states SocialOauthState[]
   social_posts        SocialPost[]
+  youtube_uploads     YouTubeUpload[]
+  publication_policies SocialPublicationPolicy[]
+  social_review_items SocialReviewItem[]
+  publication_slots SocialPublicationSlot[]
 
   @@map("users")
   feature_tours UserFeatureTour[]
@@ -197,6 +205,19 @@ model AppSetting {
   @@map("app_settings")
 }
 
+// Keep the original response available even after the task is deleted.
+model TaskIdempotencyKey {
+  user_id         String
+  idempotency_key String
+  request_hash    String
+  task_id         String
+  created_at      DateTime @default(now()) @db.Timestamptz
+  user            User     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([user_id, idempotency_key])
+  @@map("task_idempotency_keys")
+}
+
 // Durable billing charges with failure refunds. No task/user relation: deletion must retain usage
 // and the original task idempotency key. The backend owns all writes.
 model MinuteUsageEvent {
@@ -251,6 +272,7 @@ model Task {
   user                 User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
   source               Source?   @relation(fields: [source_id], references: [id], onDelete: SetNull)
   social_posts         SocialPost[]
+  social_review_items SocialReviewItem[]
 
   @@index([user_id])
   @@index([source_id])
@@ -282,6 +304,9 @@ model SocialAccount {
 
   user  User         @relation(fields: [user_id], references: [id], onDelete: Cascade)
   posts SocialPost[]
+  publication_policy SocialPublicationPolicy?
+  review_items SocialReviewItem[]
+  publication_slots SocialPublicationSlot[]
 
   @@unique([user_id, provider, external_account_id], map: "idx_social_accounts_unique_account")
   @@index([user_id], map: "idx_social_accounts_user_id")
@@ -344,6 +369,10 @@ model SocialPost {
   task           Task?              @relation(fields: [task_id], references: [id], onDelete: SetNull)
   social_account SocialAccount?     @relation(fields: [social_account_id], references: [id], onDelete: SetNull)
   metric_history SocialPostMetric[]
+  request_receipts SocialPostRequest[]
+  youtube_upload YouTubeUpload?
+  review_items SocialReviewItem[]
+  provider_options Json @default("{}") @db.JsonB
 
   @@index([user_id], map: "idx_social_posts_user_id")
   @@index([clip_id], map: "idx_social_posts_clip_id")
@@ -490,4 +519,199 @@ model UserFeatureTour {
   @@id([user_id, tour_id])
   @@index([tour_id], map: "ix_user_feature_tours_tour")
   @@map("user_feature_tours")
+}
+
+// Bookkeeping owned by the backend recording API. PostgreSQL check constraints
+// and the partial active-session unique index are maintained by the SQL migration.
+model RecordingChannel {
+  id         String   @id @default(uuid()) @db.VarChar(36)
+  user_id    String   @db.VarChar(36)
+  platform   String   @db.VarChar(20)
+  handle     String   @db.VarChar(255)
+  url        String   @db.VarChar(500)
+  name       String   @db.VarChar(120)
+  enabled    Boolean  @default(true)
+  quality    String   @default("best") @db.VarChar(255)
+  created_at DateTime @default(now()) @db.Timestamptz
+  updated_at DateTime @default(now()) @db.Timestamptz
+
+  user     User               @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  sessions RecordingSession[]
+  automation RecordingAutomation?
+  lease RecordingAutomationLease?
+  windows RecordingWindow[]
+
+  @@unique([user_id, platform, handle], map: "uq_recording_channel_identity")
+  @@map("recording_channels")
+}
+
+model RecordingSession {
+  id                String    @id @default(uuid()) @db.VarChar(36)
+  channel_id        String    @db.VarChar(36)
+  external_id       String    @db.VarChar(255)
+  status            String    @default("created") @db.VarChar(20)
+  settings_snapshot Json      @db.JsonB
+  started_at        DateTime? @db.Timestamptz
+  ended_at          DateTime? @db.Timestamptz
+  created_at        DateTime  @default(now()) @db.Timestamptz
+  updated_at        DateTime  @default(now()) @db.Timestamptz
+
+  channel RecordingChannel @relation(fields: [channel_id], references: [id], onDelete: Cascade)
+  windows RecordingWindow[]
+
+  @@unique([channel_id, external_id], map: "uq_recording_session_external_id")
+  @@index([channel_id, created_at, id], map: "ix_recording_sessions_channel_created")
+  @@map("recording_sessions")
+}
+
+
+// PostgreSQL checks and partial indexes are maintained by backend SQL migrations.
+model RecordingAutomation {
+  channel_id String @id @db.VarChar(36)
+  policy Json @default("{}") @db.JsonB
+  created_at DateTime @default(now()) @db.Timestamptz
+  updated_at DateTime @default(now()) @db.Timestamptz
+  channel RecordingChannel @relation(fields: [channel_id], references: [id], onDelete: Cascade)
+  @@map("recording_automation")
+}
+
+model RecordingAutomationLease {
+  channel_id String @id @db.VarChar(36)
+  holder String @db.VarChar(255)
+  fence BigInt
+  expires_at DateTime @db.Timestamptz
+  last_heartbeat_at DateTime @db.Timestamptz
+  last_error String?
+  channel RecordingChannel @relation(fields: [channel_id], references: [id], onDelete: Cascade)
+  @@map("recording_automation_leases")
+}
+
+model RecordingWindow {
+  id String @id @default(uuid()) @db.VarChar(36)
+  channel_id String @db.VarChar(36)
+  session_id String @db.VarChar(36)
+  epoch String @db.VarChar(80)
+  sequence Int
+  source_path String @db.VarChar(1024)
+  sha256 String @db.VarChar(64)
+  size_bytes BigInt
+  start_seconds Float
+  end_seconds Float
+  overlap_seconds Float @default(0)
+  status String @default("pending") @db.VarChar(20)
+  /// tasks(id), ON DELETE SET NULL; backend owns the processing relationship.
+  task_id String? @db.VarChar(36)
+  upload_ref String? @db.VarChar(1024)
+  attempts Int @default(0)
+  next_attempt_at DateTime? @db.Timestamptz
+  last_error String?
+  details Json @default("{}") @map("metadata") @db.JsonB
+  created_at DateTime @default(now()) @db.Timestamptz
+  updated_at DateTime @default(now()) @db.Timestamptz
+  channel RecordingChannel @relation(fields: [channel_id], references: [id], onDelete: Cascade)
+  session RecordingSession @relation(fields: [session_id], references: [id], onDelete: Cascade)
+  @@unique([channel_id, session_id, epoch, sequence], map: "uq_recording_window_identity")
+  @@index([channel_id, status, next_attempt_at, created_at], map: "ix_recording_windows_pending")
+  @@map("recording_windows")
+}
+
+model SocialPostRequest {
+  user_id String @db.VarChar(36)
+  request_key String @db.VarChar(200)
+  request_hash String @db.VarChar(64)
+  post_id String? @db.VarChar(36)
+  created_at DateTime @default(now()) @db.Timestamptz
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  post SocialPost? @relation(fields: [post_id], references: [id], onDelete: SetNull)
+  @@id([user_id, request_key])
+  @@map("social_post_requests")
+}
+
+// Private transfer checkpoints; never return session_url_encrypted to a client.
+model YouTubeUpload {
+  post_id String @id @db.VarChar(36)
+  user_id String @db.VarChar(36)
+  media_sha256 String
+  size_bytes BigInt
+  metadata_snapshot Json @db.JsonB
+  session_url_encrypted String?
+  confirmed_bytes BigInt @default(0)
+  bytes_started Boolean @default(false)
+  video_id String?
+  stage String @default("queued")
+  reason_code String?
+  actual_visibility String?
+  next_attempt_at DateTime? @default(now()) @db.Timestamptz
+  attempts Int @default(0)
+  lease_token String?
+  lease_expires_at DateTime? @db.Timestamptz
+  desired_publish_at DateTime? @db.Timestamptz
+  confirmed_publish_at DateTime? @db.Timestamptz
+  schedule_requested_at DateTime? @db.Timestamptz
+  processing_started_at DateTime? @db.Timestamptz
+  created_at DateTime @default(now()) @db.Timestamptz
+  updated_at DateTime @default(now()) @db.Timestamptz
+  post SocialPost @relation(fields: [post_id], references: [id], onDelete: Cascade)
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  @@map("youtube_uploads")
+}
+
+model SocialPublicationPolicy {
+  account_id String @id @db.VarChar(36)
+  user_id String @db.VarChar(36)
+  policy Json @default("{}") @db.JsonB
+  enabled_at DateTime? @db.Timestamptz
+  created_at DateTime @default(now()) @db.Timestamptz
+  updated_at DateTime @default(now()) @db.Timestamptz
+  account SocialAccount @relation(fields: [account_id], references: [id], onDelete: Cascade)
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  @@map("social_publication_policies")
+}
+
+model SocialReviewItem {
+  id String @id @db.VarChar(36)
+  user_id String @db.VarChar(36)
+  account_id String @db.VarChar(36)
+  task_id String? @db.VarChar(36)
+  // generated_clips(id), ON DELETE SET NULL, maintained in SQL.
+  clip_id String? @db.VarChar(36)
+  source_key String?
+  render_version String
+  source_file_path String
+  media_sha256 String?
+  status String @default("pending")
+  post_id String? @db.VarChar(36)
+  created_at DateTime @default(now()) @db.Timestamptz
+  decided_at DateTime? @db.Timestamptz
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  account SocialAccount @relation(fields: [account_id], references: [id], onDelete: Cascade)
+  task Task? @relation(fields: [task_id], references: [id], onDelete: SetNull)
+  post SocialPost? @relation(fields: [post_id], references: [id], onDelete: SetNull)
+  slot SocialPublicationSlot?
+  @@unique([user_id,account_id,clip_id])
+  @@index([user_id,account_id,status,created_at], map: "social_review_pending")
+  @@map("social_review_items")
+}
+
+model SocialPublicationSlot {
+  review_id String @id @db.VarChar(36)
+  user_id String @db.VarChar(36)
+  account_id String @db.VarChar(36)
+  publish_at DateTime @db.Timestamptz
+  cancelled_at DateTime? @db.Timestamptz
+  created_at DateTime @default(now()) @db.Timestamptz
+  review SocialReviewItem @relation(fields: [review_id], references: [id], onDelete: Cascade)
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  account SocialAccount @relation(fields: [account_id], references: [id], onDelete: Cascade)
+  // Active account/time uniqueness uses a partial index in SQL.
+  @@map("social_publication_slots")
+}
+
+model SocialProviderLimit {
+  provider String
+  project_key String
+  bucket String
+  retry_at DateTime @db.Timestamptz
+  @@id([provider,project_key,bucket])
+  @@map("social_provider_limits")
 }

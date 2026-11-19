@@ -35,7 +35,7 @@ def _beat(role, first, last=None, why="x"):
 
 
 def _draft(beats=None, payoffs=()):
-    return TrailerDraft(
+    return TrailerDraft(youtube_tags=[],
         premise="A founder bets the company on one deal.",
         thread="Will this deal end the company?",
         payoffs=[TrailerPayoff(first_unit=a, last_unit=b, what="the deal closes") for a, b in payoffs],
@@ -96,7 +96,9 @@ def test_off_limits_lines_are_marked():
 
 @pytest.mark.asyncio
 async def test_trailer_is_one_jumping_segment_inside_its_window(monkeypatch):
-    pi, model = _setup(monkeypatch, {"TrailerDraft": [_draft()], "SpoilerVerdict": [SAFE]})
+    draft = _draft()
+    draft.youtube_tags = ["company", "Minecraft"]
+    pi, model = _setup(monkeypatch, {"TrailerDraft": [draft], "SpoilerVerdict": [SAFE]})
 
     segments, plan = await plan_trailer(pi)
 
@@ -104,6 +106,7 @@ async def test_trailer_is_one_jumping_segment_inside_its_window(monkeypatch):
     budget = trailer_budget("auto")
     assert budget.min <= plan["seconds"] <= budget.max
     segment = segments[0]
+    assert segment["workflow_meta"]["youtube_tags"] == ["company"]
     ranges = segment["source_ranges"]
     assert segment["junction_fades"] == [TRAILER_JUNCTION_FADE] * (len(ranges) - 1)
     assert segment["max_seconds"] == budget.render_cap and segment["required"]
@@ -369,7 +372,7 @@ def test_draft_rules_reject_chopped_beats_and_middles_out_of_order(monkeypatch):
     # Clause 2 of each sentence ("and it failed...") starts after a comma pause; clause 1 ends on the comma.
     assert not clauses.unit(2).starts_sentence and clauses.unit(1).end_kind in ("clause", "pause")
     rules = _DraftRules(clauses, set(), None, trailer_budget("auto"), {}, story=True)
-    draft = TrailerDraft(
+    draft = TrailerDraft(youtube_tags=[],
         premise="p", thread="t", payoffs=[], reclaimed=[], stranger_read="", title_candidates=["a", "b", "c"],
         beats=[_beat("cold_open", 3, 4), _beat("context", 11), _beat("escalation", 21, 22), _beat("escalation", 13, 14),
                _beat("button", 31)],

@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -57,6 +58,14 @@ async def test_polling_old_queue_reservation_only_refunds_when_job_missing(
     monkeypatch.setattr(JobQueue, "get_pool", AsyncMock(return_value=SimpleNamespace(
         exists=AsyncMock(return_value=job_exists), get=AsyncMock(return_value=b"healthy")
     )))
+    class Later(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.now(tz)+timedelta(hours=2)
+
+    # PostgreSQL's update trigger refreshes updated_at even when the SQL fixture
+    # supplies an older value; advance the clock rather than bypassing the trigger.
+    monkeypatch.setattr("src.services.task_service.datetime", Later)
     service = TaskService(db_session)
     service._load_task_source_settings = AsyncMock(return_value={})
     polled = await service.get_task_with_clips(task_id)

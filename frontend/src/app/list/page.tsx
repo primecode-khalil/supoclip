@@ -1,5 +1,6 @@
 "use client";
 
+import { SourceDeletionWarning } from "@/components/publishing/source-deletion-warning";
 import { removeTaskDrafts } from "@/lib/editor/draft-cache";
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useTranslations } from "next-intl";
@@ -72,6 +73,8 @@ export default function ListPage() {
   } | null>(null);
   const [activeBatchAction, setActiveBatchAction] = useState<BatchAction>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [socialDeleteReady, setSocialDeleteReady] = useState(false);
+  const [socialDeletePostIds, setSocialDeletePostIds] = useState<string[]>([]);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "ready" | "active" | "attention">("all");
   const [sort, setSort] = useState<LibrarySort>("newest");
@@ -281,13 +284,14 @@ export default function ListPage() {
   };
 
   const handleDeleteSelected = async () => {
+    if (!socialDeleteReady) return;
     const targetTaskIds = [...selectedTaskIds];
 
     await runBatchAction(
       "delete",
       targetTaskIds,
       async (taskId) => {
-        const response = await fetch(`/api/tasks/${taskId}`, { method: "DELETE" });
+        const response = await fetch(`/api/tasks/${taskId}?confirm_social_delete=${socialDeletePostIds.length > 0}`, { method: "DELETE", headers: {"Content-Type":"application/json"}, body: JSON.stringify({delete_social_post_ids:socialDeletePostIds}) });
         if (response.ok) removeTaskDrafts(taskId);
         return response;
       },
@@ -565,6 +569,7 @@ export default function ListPage() {
                     variant="ghost"
                     size="sm"
                     onClick={() => setShowDeleteDialog(true)}
+                    aria-label={t("delete.action")}
                     disabled={selectedCount === 0 || activeBatchAction !== null}
                     className="text-red-400 hover:text-red-300 hover:bg-red-950/50 disabled:text-stone-600 disabled:hover:bg-transparent dark:hover:bg-red-950/60 dark:disabled:text-stone-500"
                   >
@@ -611,18 +616,19 @@ export default function ListPage() {
 
       {/* ── Delete confirmation dialog ────────────────────────── */}
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
-        <AlertDialogContent>
+        <AlertDialogContent className="max-h-[90dvh] overflow-y-auto">
           <AlertDialogHeader>
             <AlertDialogTitle>{t("delete.title", { count: selectedCount })}</AlertDialogTitle>
             <AlertDialogDescription>
               {t("delete.description", { count: selectedCount })}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {showDeleteDialog && <SourceDeletionWarning taskIds={selectedTaskIds} onReady={setSocialDeleteReady} onAffected={setSocialDeletePostIds} />}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={activeBatchAction === "delete"}>{t("cancelDialog")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => void handleDeleteSelected()}
-              disabled={activeBatchAction === "delete" || selectedCount === 0}
+              disabled={activeBatchAction === "delete" || selectedCount === 0 || !socialDeleteReady}
               className="bg-red-600 hover:bg-red-700"
             >
               {activeBatchAction === "delete" ? (

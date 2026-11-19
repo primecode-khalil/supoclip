@@ -12,6 +12,7 @@ import subprocess
 import uuid
 
 from ..stream_transfer import run_stream_download
+from ..publishing_tags import ground_youtube_tags
 from ..utils.async_helpers import run_in_thread
 from ..download_progress import (
     DownloadRecovery,
@@ -1278,6 +1279,9 @@ class VideoService:
                 segment_payload,
                 transcript_data,
             )
+            suggested_tags = segment.get("youtube_tags") if isinstance(segment, dict) else getattr(segment, "youtube_tags", None)
+            if suggested_tags:
+                segment_payload["youtube_tags"] = ground_youtube_tags(suggested_tags, segment_payload["text"])
             segments_json.append(segment_payload)
 
         try:

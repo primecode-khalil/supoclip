@@ -2,11 +2,12 @@
 Task API routes using refactored architecture.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from starlette.background import BackgroundTask
 from ...media_storage import MediaStorage, STORAGE_ERRORS, is_s3, media_work
+from sqlalchemy.exc import TimeoutError as PoolTimeout
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 from pathlib import Path
@@ -28,9 +29,16 @@ from ... import clip_archive
 from ...repositories.generation_allowance_guard import generation_allowance_guard, GenerationAllowanceBusy
 from ...repositories.task_run_guard import task_run_guard, TaskRunBusy
 from ...repositories.task_repository import TaskRepository
+from ...repositories.task_idempotency_repository import (
+    TaskIdempotencyConflict,
+    TaskIdempotencyReplay,
+    find_task_for_key,
+    claim_key,
+)
 from ...database import get_db
 from ...database import AsyncSessionLocal
 from ...services.task_service import TaskService
+from ...services.social_source_deletion import require_social_deletion_ack, SourceDeletionConfirmation
 from ...services.video_service import VideoService
 from ...media.upload_ingest import foreign_upload
 from ...repositories.upload_repository import get_stored_upload
@@ -44,10 +52,11 @@ from ...source_identity import (
     source_key_for_url,
 )
 from ...workers.job_queue import JobQueue
+from ..pool_timeout import pool_busy
 from ...workers.progress import ProgressTracker
 from ...config import get_config
 from ...youtube_utils import async_get_youtube_video_info, canonical_youtube_url, has_verified_duration
-from ...youtube_proxy import YouTubeAgeRestrictedError, YouTubeGeoRestrictedError
+from ...youtube_proxy import YouTubeAccessBlockedError, YouTubeAgeRestrictedError, YouTubeGeoRestrictedError
 from ...stream_source import (
     PREFLIGHT_DEADLINE_SECONDS as STREAM_PREFLIGHT_DEADLINE_SECONDS,
     StreamDurationUnavailableError,
@@ -121,6 +130,11 @@ async def _preflight_youtube_source(url: str, duration_limit: int) -> Dict[str, 
         duration = metadata["duration"]
     except _DurationUnavailable:
         raise _duration_unavailable_error("YouTube") from None
+    except YouTubeAccessBlockedError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "YOUTUBE_ACCESS_BLOCKED", "message": f"{exc} No minutes were used."},
+        ) from None
     except YouTubeGeoRestrictedError as exc:
         raise HTTPException(
             status_code=422,
@@ -579,6 +593,42 @@ def _queued_upload_task(task_id: str, job_id: str | None) -> Dict[str, Any]:
     }
 
 
+def _task_idempotency(request: Request, options: Dict[str, Any], title: Any) -> tuple[str, str] | None:
+    """``(key, request_hash)`` when the client sent an Idempotency-Key.
+
+    The hash covers the normalized options and title, so a retry that only
+    spells an option differently is still the same request.
+    """
+    key = _request_idempotency_key(request)
+    if not key:
+        return None
+    payload = json.dumps({"options": options, "title": title}, sort_keys=True, separators=(",", ":"), default=str)
+    return key, hashlib.sha256(payload.encode()).hexdigest()
+
+
+async def _replay_task(db, user_id: str, idempotency: tuple[str, str]) -> Dict[str, Any] | None:
+    """The response for a task this key already created, if any."""
+    try:
+        row = await find_task_for_key(db, user_id, *idempotency)
+    except TaskIdempotencyConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "IDEMPOTENCY_KEY_REUSED", "message": str(exc)},
+        ) from None
+    return None if row is None else _queued_upload_task(row.id, row.job_id)
+
+
+async def _bind_existing_task(db, user_id, idempotency, response):
+    """Remember a successful deduplication even after the active task finishes."""
+    if not idempotency:
+        return response
+    if await claim_key(db, user_id, *idempotency, response["task_id"]):
+        await db.commit()
+        return response
+    # Another request already bound this key. Its hash must match.
+    return await _replay_task(db, user_id, idempotency) or response
+
+
 @router.post("/")
 async def create_task(request: Request, db: AsyncSession = Depends(get_db)):
     """
@@ -665,10 +715,29 @@ async def _create_task(request: Request, db: AsyncSession, attempt: SourceAttemp
         upload_options["workflow"] = workflow_spec.workflow
         upload_options["workflow_options"] = workflow_options
     upload_request_key = _upload_request_key(request, raw_source["url"], upload_options)
+    history_window_id = None
+    if db is not None:
+        from ...recording.history import recording_window_for_task
+        from ...recording.errors import RecordingError
+
+        try:
+            history_window_id = await recording_window_for_task(db, user_id, _request_idempotency_key(request), raw_source["url"])
+        except RecordingError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    # A keyed request answers with the task the key made, however long ago
+    # within retention. Unkeyed upload retries keep the short-window dedupe.
+    idempotency = _task_idempotency(request, upload_options, raw_source.get("title"))
+    if idempotency and db is not None:
+        replay = await _replay_task(db, user_id, idempotency)
+        if replay is not None:
+            return replay
     if upload_request_key and db is not None:
         existing = await TaskRepository.find_recent_upload_task(db, user_id, upload_request_key)
         if existing is not None:
-            return _queued_upload_task(existing.id, existing.job_id)
+            return await _bind_existing_task(
+                db, user_id, idempotency,
+                _queued_upload_task(existing.id, existing.job_id),
+            )
 
     # Same video already queued or rendering: hand back that task. This is
     # before preflight and before any minute charge. Callers that unit-test
@@ -679,7 +748,10 @@ async def _create_task(request: Request, db: AsyncSession, attempt: SourceAttemp
         if source_key:
             existing = await TaskRepository.find_active_source_task(db, user_id, source_key)
             if existing is not None:
-                return duplicate_source_response(str(existing.id), existing.job_id)
+                return await _bind_existing_task(
+                    db, user_id, idempotency,
+                    duplicate_source_response(str(existing.id), existing.job_id),
+                )
 
     try:
         billing_service = BillingService(db)
@@ -726,6 +798,12 @@ async def _create_task(request: Request, db: AsyncSession, attempt: SourceAttemp
         async with generation_allowance_guard(
             db, user_id, enabled=runtime_config.monetization_enabled
         ):
+            if idempotency:
+                # Admissions are serialized here. A retry that waited on the
+                # original must get its task, not a limit error after its charge.
+                replay = await _replay_task(db, user_id, idempotency)
+                if replay is not None:
+                    return replay
             await billing_service.assert_can_create_task(user_id, duration_seconds)
             async with source_admission_lock(db, user_id, source_key):
                 if source_key:
@@ -733,28 +811,54 @@ async def _create_task(request: Request, db: AsyncSession, attempt: SourceAttemp
                         db, user_id, source_key
                     )
                     if existing is not None:
-                        return duplicate_source_response(str(existing.id), existing.job_id)
-                # Create task while the source lock is held, so a second
-                # request waits and then finds this row instead of charging.
-                task_id = await task_service.create_task_with_source(
-                    user_id=user_id,
-                    url=raw_source["url"],
-                    title=source_title,
-                    font_family=font_family,
-                    font_size=font_size,
-                    font_color=font_color,
-                    caption_template=caption_template,
-                    include_broll=include_broll,
-                    processing_mode=processing_mode,
-                    source_duration_seconds=math.ceil(duration_seconds),
-                    upload_request_key=upload_request_key,
-                    workflow=workflow_spec.workflow,
-                    workflow_options=workflow_options,
+                        return await _bind_existing_task(
+                            db, user_id, idempotency,
+                            duplicate_source_response(str(existing.id), existing.job_id),
+                        )
+                processing_job_id = f"submission:{secrets.token_hex(16)}"
+                initial_source_metadata = _merge_task_source_metadata(
+                    {
+                        "processing_job_id": processing_job_id,
+                        "clip_length": clip_length,
+                        "enqueued_at": datetime.now(timezone.utc).isoformat(),
+                        **({"recording_window_id": history_window_id} if history_window_id else {}),
+                        **({"durable_upload_request": True} if history_window_id and upload_request_key and _request_idempotency_key(request) else {}),
+                        **({"source_key": source_key} if source_key else {}),
+                        **_stream_resolution_metadata(stream_metadata),
+                    },
+                    source_url=raw_source["url"], source_type=source_type,
+                    output_format=output_format, add_subtitles=add_subtitles,
+                    cleanup_settings=cleanup_settings,
                 )
+                try:
+                    task_id = await task_service.create_task_with_source(
+                        user_id=user_id,
+                        url=raw_source["url"],
+                        title=source_title,
+                        font_family=font_family,
+                        font_size=font_size,
+                        font_color=font_color,
+                        caption_template=caption_template,
+                        include_broll=include_broll,
+                        processing_mode=processing_mode,
+                        source_duration_seconds=math.ceil(duration_seconds),
+                        upload_request_key=upload_request_key,
+                        initial_source_metadata=initial_source_metadata,
+                        workflow=workflow_spec.workflow,
+                        workflow_options=workflow_options,
+                        **({"idempotency": idempotency} if idempotency else {}),
+                    )
+                except TaskIdempotencyReplay:
+                    # A concurrent request with this key committed its task first
+                    # (self-hosted creates aren't serialized). Ours rolled back.
+                    replay = await _replay_task(db, user_id, idempotency)
+                    if replay is None:
+                        raise
+                    return replay
             if getattr(task_service, "reused_upload_task", False):
-                return _queued_upload_task(
+                return await _bind_existing_task(db, user_id, idempotency, _queued_upload_task(
                     task_id, getattr(task_service, "reused_upload_job_id", None)
-                )
+                ))
 
             try:
                 # Persist retry options before submitting the job; Redis remains a legacy cache.
@@ -838,6 +942,10 @@ async def _create_task(request: Request, db: AsyncSession, attempt: SourceAttemp
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except BillingLimitExceeded as e:
+        if idempotency and db is not None:
+            replay = await _replay_task(db, user_id, idempotency)
+            if replay is not None:
+                return replay
         raise HTTPException(
             status_code=402,
             detail={
@@ -1099,7 +1207,7 @@ async def update_task(
 
 @router.delete("/{task_id}")
 async def delete_task(
-    task_id: str, request: Request, db: AsyncSession = Depends(get_db)
+    task_id: str, request: Request, db: AsyncSession = Depends(get_db), confirm_social_delete: bool = False, body: SourceDeletionConfirmation | None = Body(default=None)
 ):
     """Delete a task and all its associated clips."""
     try:
@@ -1116,8 +1224,9 @@ async def delete_task(
                 status_code=403, detail="Not authorized to delete this task"
             )
 
+        selected = await require_social_deletion_ack(db,user_id,task_id,confirmed=confirm_social_delete,selected_post_ids=body.delete_social_post_ids if body else None)
         # Delete clips and task
-        await task_service.delete_task(task_id)
+        await task_service.delete_task(task_id,social_post_ids=selected)
 
         return {"message": "Task deleted successfully"}
 
@@ -1132,7 +1241,7 @@ async def delete_task(
 
 @router.delete("/{task_id}/clips/{clip_id}")
 async def delete_clip(
-    task_id: str, clip_id: str, request: Request, db: AsyncSession = Depends(get_db)
+    task_id: str, clip_id: str, request: Request, db: AsyncSession = Depends(get_db), confirm_social_delete: bool = False, body: SourceDeletionConfirmation | None = Body(default=None)
 ):
     """Delete a specific clip."""
     try:
@@ -1153,7 +1262,8 @@ async def delete_clip(
         if not clip or clip["task_id"] != task_id:
             raise HTTPException(status_code=404, detail="Clip not found")
 
-        await task_service.delete_clip(task_id, clip_id)
+        selected = await require_social_deletion_ack(db,user_id,task_id,clip_id=clip_id,confirmed=confirm_social_delete,selected_post_ids=body.delete_social_post_ids if body else None)
+        await task_service.delete_clip(task_id, clip_id,social_post_ids=selected)
 
         return {"message": "Clip deleted successfully"}
 
@@ -1211,6 +1321,8 @@ async def get_clip_file(
         )
     except HTTPException:
         raise
+    except PoolTimeout:
+        raise pool_busy(request) from None
     except Exception as e:
         logger.error(f"Error serving clip file: {e}")
         raise HTTPException(status_code=500, detail=f"Error serving clip file: {str(e)}")
@@ -1579,6 +1691,8 @@ async def export_clip(
         )
     except HTTPException:
         raise
+    except PoolTimeout:
+        raise pool_busy(request) from None
     except Exception as e:
         logger.error(f"Error exporting clip: {e}")
         raise HTTPException(status_code=500, detail=f"Error exporting clip: {str(e)}")

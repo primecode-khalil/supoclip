@@ -42,9 +42,10 @@ async def reference_index(db, storage):
     rows = list(rows)
     editors = {editor_dir(storage.config.temp_dir, row.task_id, row.id, row.filename).name for row in rows}
     clips = {row.file_path for row in rows}
-    # A post being published may still upload a render the clip already replaced.
+    # Pending review and approved posts can retain a render the library replaced.
     rows = await db.execute(text(
-        "SELECT source_file_path FROM social_posts WHERE status = 'publishing' AND source_file_path IS NOT NULL"
+        "SELECT source_file_path FROM social_posts WHERE (status = 'publishing' OR (status IN ('queued','scheduled','failed') AND provider_options ? 'review' AND COALESCE(provider_options->>'delete_remote','false')<>'true' AND COALESCE(provider_options->>'cancel_requested','false')<>'true')) AND source_file_path IS NOT NULL "
+        "UNION SELECT source_file_path FROM social_review_items WHERE status='pending' AND clip_id IS NOT NULL"
     ))
     clips |= {row.source_file_path for row in rows}
     rows = await db.execute(text("SELECT DISTINCT s.url, s.type FROM sources s JOIN tasks t ON t.source_id = s.id"))
@@ -122,7 +123,8 @@ async def referenced(db, reference: str, storage: MediaStorage, *, prefix=False,
     result = await db.execute(text("""
         SELECT EXISTS(SELECT 1 FROM generated_clips WHERE file_path = :path)
             OR EXISTS(SELECT 1 FROM sources s JOIN tasks t ON t.source_id = s.id WHERE s.url = :url)
-            OR EXISTS(SELECT 1 FROM social_posts WHERE status = 'publishing' AND source_file_path = :path)
+            OR EXISTS(SELECT 1 FROM social_posts WHERE (status = 'publishing' OR (status IN ('queued','scheduled','failed') AND provider_options ? 'review' AND COALESCE(provider_options->>'delete_remote','false')<>'true' AND COALESCE(provider_options->>'cancel_requested','false')<>'true')) AND source_file_path = :path)
+            OR EXISTS(SELECT 1 FROM social_review_items WHERE status='pending' AND clip_id IS NOT NULL AND source_file_path=:path)
             OR EXISTS(
                 SELECT 1 FROM media_upload_sessions
                 WHERE state = 'completed' AND (video_path = :url OR storage_reference = ANY(CAST(:candidates AS text[])))

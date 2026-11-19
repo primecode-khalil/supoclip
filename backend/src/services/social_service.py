@@ -146,6 +146,8 @@ class SocialService:
 
     async def can_schedule(self, user_id: str) -> bool:
         """Plan entitlement, plus admin testing during the restricted rollout."""
+        if self.config.self_host and not self.config.monetization_enabled:
+            return True
         if self.config.social_publishing_access == "admins":
             row = (
                 await self.db.execute(
@@ -205,6 +207,31 @@ class SocialService:
 
     async def list_connections(self, user_id: str) -> List[Dict[str, Any]]:
         return await self.repo.list_accounts(self.db, user_id)
+
+    async def youtube_setup(self, user_id: str) -> Dict[str, Any]:
+        from ..social.youtube import SCOPES, YouTubeProvider
+
+        connections = []
+        for connection in await self.list_connections(user_id):
+            if connection["provider"] != "youtube":
+                continue
+            account = await self.repo.get_account_with_tokens(self.db, connection["id"])
+            if not account or account.get("user_id") != user_id or account.get("revoked_at"):
+                continue
+            scopes = set((account.get("scopes") or "").split())
+            connections.append({
+                **connection,
+                "refresh_access_available": bool(account.get("refresh_token_encrypted")),
+                "permissions_complete": set(SCOPES).issubset(scopes),
+                "private_test_completed": bool((account.get("metadata") or {}).get("youtube_private_test_completed_at")),
+            })
+        return {
+            "configured": YouTubeProvider(self.config).is_configured,
+            "redirect_uri": self.redirect_uri_for("youtube"),
+            "connections": connections,
+            "refresh_access_available": any(c["refresh_access_available"] and c["status"] == "active" for c in connections),
+            "private_test_completed": any(c["private_test_completed"] for c in connections),
+        }
 
     async def publishing_options(self, user_id: str, account_id: str) -> Dict[str, Any]:
         """Current account-specific choices; never expose credentials to the client."""
@@ -296,6 +323,11 @@ class SocialService:
         except SocialProviderError as exc:
             raise SocialValidationError(str(exc)) from exc
 
+        from ..social.youtube import YouTubeProvider
+        new_youtube = isinstance(provider, YouTubeProvider) and not any(
+            row["provider"] == "youtube" and row["external_account_id"] == profile.external_account_id
+            for row in await self.repo.list_accounts(self.db, user_id, include_revoked=True)
+        )
         account = await self.repo.upsert_account(
             self.db,
             user_id=user_id,
@@ -312,6 +344,9 @@ class SocialService:
             scopes=tokens.scopes,
             metadata=profile.metadata,
         )
+        if new_youtube:
+            from .social_publication_policy import SocialPublicationPolicyService
+            await SocialPublicationPolicyService(self.db).save(user_id, account["id"], {})
         logger.info(
             "Connected %s account %s for user %s", provider.name, account["id"], user_id
         )
@@ -319,6 +354,15 @@ class SocialService:
 
     async def disconnect(self, user_id: str, account_id: str) -> bool:
         account = await self.repo.get_account_with_tokens(self.db, account_id)
+        if hasattr(self.repo, "native_for_disconnect"):
+            pending = await self.repo.native_for_disconnect(self.db, user_id, account_id)
+            if pending:
+                for post_id in pending:
+                    await self.repo.request_native_cancel(self.db, user_id, post_id)
+                    await self._enqueue_recovery(post_id)
+                error = SocialValidationError("YouTube cancellation is pending. Uploads are paused; wait for confirmation in Publishing, then disconnect again. Check Studio if urgent.")
+                error.status_code = 409
+                raise error
         # Clear local credentials first: disconnecting must work even when the
         # platform is unreachable.
         removed = await self.repo.revoke_account(self.db, user_id, account_id)
@@ -333,7 +377,19 @@ class SocialService:
 
     async def disconnect_all(self, user_id: str) -> int:
         """Disconnect every account of a user (account deletion)."""
-        accounts = await self.repo.list_accounts(self.db, user_id)
+        accounts = await self.repo.list_accounts(self.db, user_id, include_revoked=True)
+        pending = []
+        if hasattr(self.repo, "native_for_disconnect"):
+            for account in accounts:
+                ids = await self.repo.native_for_disconnect(self.db,user_id,account["id"],include_private_copies=True)
+                for post_id in ids:
+                    await self.repo.request_native_cancel(self.db,user_id,post_id,delete_remote=True)
+                    await self._enqueue_recovery(post_id)
+                pending.extend(ids)
+        if pending:
+            error = SocialValidationError("Linked YouTube deletion is pending. Wait for confirmation in Publishing, then delete your account again. Reconnect any disconnected channel; your app account stays in place until removal is confirmed.")
+            error.status_code = 409
+            raise error
         removed = 0
         for account in accounts:
             removed += int(await self.disconnect(user_id, account["id"]))
@@ -456,6 +512,11 @@ class SocialService:
         hashtags: Optional[List[str]],
         privacy_level: Optional[str],
         scheduled_for: Optional[str],
+        request_key: Optional[str] = None,
+        request_hash: Optional[str] = None,
+        provider_options: Optional[Dict[str, Any]] = None,
+        transactional: bool = False,
+        verified_media: bool = False,
     ) -> Dict[str, Any]:
         task = await self.task_repo.get_task_by_id(self.db, task_id)
         if not task or task.get("user_id") != user_id:
@@ -465,7 +526,7 @@ class SocialService:
             raise SocialNotFound("Clip not found")
         clip_file = clip.get("file_path") or ""
         try:
-            clip_exists = await self._media_exists(clip_file)
+            clip_exists = verified_media or await self._media_exists(clip_file)
         except STORAGE_ERRORS as exc:
             raise SocialProviderUnavailable(
                 "Clip storage is temporarily unavailable. Try again shortly."
@@ -507,11 +568,21 @@ class SocialService:
         clean_caption = (caption if caption is not None else (clip.get("text") or "")).strip()
         clean_caption = clean_caption[:MAX_CAPTION_LENGTH]
         clean_hashtags = normalize_hashtags(hashtags)
+        if provider.name == "youtube":
+            from ..publishing_tags import ground_youtube_tags, normalize_youtube_tags
+
+            provider_options = dict(provider_options or {})
+            if "youtube_tags" in provider_options:
+                provider_options["youtube_tags"] = normalize_youtube_tags(provider_options["youtube_tags"])
+            elif "youtube_tags" in (clip.get("workflow_meta") or {}):
+                provider_options["youtube_tags"] = ground_youtube_tags(
+                    clip["workflow_meta"]["youtube_tags"], clip.get("text") or "")
 
         when = _parse_schedule(scheduled_for)
         now = datetime.now(timezone.utc)
-        status = "scheduled" if when and when > now + timedelta(seconds=30) else "queued"
-        if status == "scheduled" and not await self.can_schedule(user_id):
+        native_schedule = provider.name == "youtube" and (provider_options or {}).get("native_schedule") is True
+        status = "scheduled" if when and when > now + timedelta(seconds=30) and not native_schedule else "queued"
+        if (status == "scheduled" or native_schedule) and not await self.can_schedule(user_id):
             raise SocialPlanRequired(
                 "Scheduling posts is available on the Creator plan. "
                 "You can still publish right away."
@@ -525,7 +596,7 @@ class SocialService:
             social_account_id=account["id"],
             provider=provider.name,
             status=status,
-            scheduled_for=when if status == "scheduled" else None,
+            scheduled_for=when if status == "scheduled" or native_schedule else None,
             title=clean_title,
             caption=clean_caption,
             hashtags=clean_hashtags,
@@ -533,8 +604,11 @@ class SocialService:
             media_token=secrets.token_urlsafe(32),
             source_file_path=clip_file,
             clip_snapshot=clip,
+            **({"request_key": request_key, "request_hash": request_hash} if request_key else {}),
+            **({"provider_options": provider_options} if provider_options else {}),
+            **({"commit": False} if transactional else {}),
         )
-        if status == "queued":
+        if status == "queued" and not transactional:
             await self._enqueue_or_fail(post["id"], int(post.get("attempts") or 0))
             post = await self.repo.get_post(self.db, post["id"]) or post
         logger.info(
@@ -549,6 +623,10 @@ class SocialService:
         # state collapses into one job. The claim in ``publish_post`` is what
         # actually guarantees a single upload.
         kwargs: Dict[str, Any] = {"_job_id": f"social:{post_id}:{attempts}"}
+        from ..social.youtube import YouTubeProvider
+        post = await self.repo.get_post(self.db, post_id)
+        if post and post.get("provider") == "youtube" and isinstance(get_provider("youtube", self.config), YouTubeProvider):
+            kwargs["_queue_name"] = "supoclip_cron"
         if defer_seconds > 0:
             kwargs["_defer_by"] = timedelta(seconds=defer_seconds)
         try:
@@ -556,6 +634,15 @@ class SocialService:
         except DuplicateJobError:
             # That job is still waiting and will claim the post itself.
             logger.info("Publish job for post %s attempt %s is already queued", post_id, attempts)
+
+    async def _enqueue_recovery(self, post_id):
+        # A finished ARQ attempt may retain its result; a minute bucket permits the next poll.
+        try:
+            await self.queue_adapter.enqueue_job(PUBLISH_JOB_NAME, post_id,
+                _job_id=f"youtube-reconcile:{post_id}:{int(datetime.now(timezone.utc).timestamp() // 60)}",
+                _queue_name="supoclip_cron")
+        except DuplicateJobError:
+            pass
 
     async def _enqueue_or_fail(self, post_id: str, attempts: int) -> None:
         """Enqueue a freshly queued post; never leave it queued without a job."""
@@ -578,9 +665,12 @@ class SocialService:
         clip_id: Optional[str] = None,
         status: Optional[str] = None,
         limit: int = 100,
+        account_id: Optional[str] = None,
+        status_group: Optional[str] = None,
+        offset: int = 0,
     ) -> List[Dict[str, Any]]:
         return await self.repo.list_posts(
-            self.db, user_id, task_id=task_id, clip_id=clip_id, status=status, limit=limit
+            self.db, user_id, task_id=task_id, clip_id=clip_id, status=status, limit=limit, **({"account_id": account_id, "status_group": status_group, "offset": offset} if account_id or status_group or offset else {})
         )
 
     async def get_post(self, user_id: str, post_id: str) -> Dict[str, Any]:
@@ -591,6 +681,14 @@ class SocialService:
         return post
 
     async def cancel_post(self, user_id: str, post_id: str) -> Dict[str, Any]:
+        existing = await self.repo.get_user_post(self.db, user_id, post_id)
+        if existing and existing.get("provider_options", {}).get("native_schedule"):
+            if existing["status"] == "published":
+                raise SocialValidationError("This video is already public. Manage it in YouTube Studio.")
+            if existing["status"] != "cancelled":
+                await self.repo.request_native_cancel(self.db, user_id, post_id)
+                await self._enqueue_recovery(post_id)
+            return await self.repo.get_post(self.db, post_id)
         # Conditional update: a worker claim or a second click can't race it.
         if not await self.repo.cancel_post(self.db, user_id, post_id):
             post = await self.repo.get_user_post(self.db, user_id, post_id)
@@ -602,6 +700,31 @@ class SocialService:
         post = await self.repo.get_post(self.db, post_id)
         assert post is not None
         return post
+
+    async def reschedule_post(self, user_id, post_id, custom_local):
+        from sqlalchemy import text
+        from ..repositories.social_publication_policy_repository import SocialPublicationPolicyRepository as Policies
+        post = await self.repo.get_user_post(self.db, user_id, post_id)
+        if not post:
+            raise SocialNotFound("Post not found")
+        if not post.get("provider_options", {}).get("native_schedule") or post["status"] in {"published", "cancelled"} or post["provider_options"].get("cancel_requested"):
+            raise SocialValidationError("Only an approved future YouTube publication can be rescheduled.")
+        await Policies.lock_account(self.db, user_id, post["social_account_id"])
+        # Do not change the target while another worker is updating Google.
+        state = (await self.db.execute(text("SELECT lease_expires_at FROM youtube_uploads WHERE post_id=:id FOR UPDATE"), {"id":post_id})).mappings().first()
+        if state and state["lease_expires_at"] and state["lease_expires_at"] > datetime.now(timezone.utc):
+            await self.db.rollback()
+            raise SocialValidationError("This video is being updated. Try rescheduling again shortly.")
+        try:
+            slot = await Policies.reserve(self.db, post["provider_options"]["review"]["id"], datetime.now(timezone.utc), custom_local=custom_local, commit=False)
+        except (ValueError, KeyError) as exc:
+            await self.db.rollback()
+            raise SocialValidationError(str(exc)) from None
+        await self.db.execute(text("UPDATE social_posts SET scheduled_for=:at,status=CASE WHEN status='queued' THEN 'queued' ELSE 'publishing' END,updated_at=NOW() WHERE id=:id"), {"id":post_id,"at":slot})
+        await self.db.execute(text("UPDATE youtube_uploads SET desired_publish_at=:at,stage='scheduling',reason_code=NULL,next_attempt_at=NOW() WHERE post_id=:id"), {"id":post_id,"at":slot})
+        await self.db.commit()
+        await self._enqueue_recovery(post_id)
+        return await self.repo.get_post(self.db, post_id)
 
     async def retry_post(self, user_id: str, post_id: str) -> Dict[str, Any]:
         post = await self.repo.get_user_post(self.db, user_id, post_id)
@@ -626,6 +749,11 @@ class SocialService:
         if attempts is None:
             # A concurrent retry (double click) already queued it.
             raise SocialValidationError("This post is already being retried.")
+        if post["provider"] == "youtube":
+            from ..repositories.youtube_upload_repository import YouTubeUploadRepository
+            from ..social.youtube import YouTubeProvider
+            if isinstance(get_provider("youtube", self.config), YouTubeProvider):
+                await YouTubeUploadRepository.request_retry(self.db, post_id)
         await self._enqueue_or_fail(post_id, attempts)
         return await self.repo.get_post(self.db, post_id) or post
 
@@ -633,6 +761,8 @@ class SocialService:
         post = await self.repo.get_user_post(self.db, user_id, post_id)
         if not post:
             return False
+        if post.get("provider_options", {}).get("native_schedule") and (post["status"] not in {"published", "cancelled"} or (post["status"] == "cancelled" and post.get("external_post_id") and post.get("stage") != "deleted")):
+            raise SocialValidationError("This YouTube copy still needs its receipt. Remove the linked library source to delete the private copy before clearing this history.")
         if post["status"] in {"queued", "publishing"} or not await self.repo.delete_post(
             self.db, user_id, post_id
         ):
@@ -726,6 +856,12 @@ class SocialService:
         post = await self.repo.get_post(self.db, post_id)
         if not post:
             raise SocialNotFound(f"Post {post_id} not found")
+        if post["provider"] == "youtube":
+            from ..social.youtube import YouTubeProvider
+            from .youtube_publish_service import YouTubePublishService
+            provider = get_provider("youtube", self.config)
+            if isinstance(provider, YouTubeProvider):
+                return await YouTubePublishService(self, provider).advance(post_id)
         if post["status"] == "publishing" and post.get("pending_handle"):
             # The platform accepted the upload and processes it asynchronously.
             return await self.resolve_pending_post(post)
@@ -907,6 +1043,12 @@ class SocialService:
 
     async def resolve_pending_post(self, post: Dict[str, Any]) -> Dict[str, Any]:
         """Poll a platform that publishes asynchronously (TikTok)."""
+        if post["provider"] == "youtube":
+            from ..social.youtube import YouTubeProvider
+            from .youtube_publish_service import YouTubePublishService
+            provider = get_provider("youtube", self.config)
+            if isinstance(provider, YouTubeProvider):
+                return await YouTubePublishService(self, provider).advance(post["id"])
         account_id = post.get("social_account_id")
         account = (
             await self.repo.get_account_with_tokens(self.db, account_id) if account_id else None
@@ -951,7 +1093,11 @@ class SocialService:
         return await self.repo.get_post(self.db, post["id"]) or post
 
     async def resolve_pending_posts(self, limit: int = 100) -> int:
+        native_due = await self.repo.native_jobs_due(self.db, limit=limit) if hasattr(self.repo, "native_jobs_due") else []
+        for item in native_due:
+            await self._enqueue_recovery(item["id"])
         posts = await self.repo.list_pending_publishes(self.db, limit=limit)
+        posts = [p for p in posts if not p.get("provider_options", {}).get("native_schedule")]
         for post in posts:
             try:
                 await self.resolve_pending_post(post)
@@ -962,7 +1108,7 @@ class SocialService:
                     type(exc).__name__,
                     redact(exc),
                 )
-        return len(posts)
+        return len(posts) + len(native_due)
 
     async def sweep_stale_publishing(self) -> List[str]:
         """Fail posts whose worker vanished mid-upload (never re-uploaded)."""

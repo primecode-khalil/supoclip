@@ -98,12 +98,14 @@ export function DeleteAccountSection({ email, hasAppStoreSubscription = false }:
           <DialogTrigger asChild>
             <Button type="button" variant="destructive">{t("deleteAccount.action")}</Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="max-h-[90dvh] overflow-y-auto">
             <form onSubmit={handleDelete} className="space-y-4">
               <DialogHeader>
                 <DialogTitle>{t("deleteAccount.dialogTitle")}</DialogTitle>
                 <DialogDescription>{t("deleteAccount.dialogBody")}</DialogDescription>
               </DialogHeader>
+
+              <p className="text-sm text-muted-foreground">Linked pending YouTube uploads will also be permanently deleted. Account deletion waits for YouTube confirmation and may need reconnection. Already published videos stay on YouTube.</p>
 
               {hasAppStoreSubscription && (
                 <Alert className="border-amber-200 bg-amber-50 dark:border-amber-900/60 dark:bg-amber-950/40">

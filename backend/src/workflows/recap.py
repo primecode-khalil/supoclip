@@ -893,7 +893,7 @@ async def plan_recap(pi: PlanInput) -> tuple[list[dict[str, Any]], dict[str, Any
     # A recap always carries a title and a reasoning that speak only of what plays.
     title = _recap_title(pi, draft, cut, final_title)
     reasoning = _reasoning(why) or pi.outline.outline.one_line
-    plan_segments, plan = _segments(pi, cut, title, budget, reasoning)
+    plan_segments, plan = _segments(pi, cut, title, budget, reasoning, draft.youtube_tags)
     if draft.spine.strip():
         plan["summary"] = " ".join(draft.spine.split())
     return plan_segments, plan
@@ -908,7 +908,7 @@ def _reasoning(text: str) -> str:
 
 
 def _segments(
-    pi: PlanInput, cut: RecapCut, title: str, budget: Budget, reasoning: str = ""
+    pi: PlanInput, cut: RecapCut, title: str, budget: Budget, reasoning: str = "", youtube_tags: list[str] | None = None
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     index = pi.index
     ranges: list[tuple[float, float]] = []
@@ -941,7 +941,7 @@ def _segments(
         hook_title=compose_title(title),
         reasoning=reasoning or pi.outline.outline.one_line,
         workflow_role="recap",
-        meta={"points": meta_points, **({} if pi.setting("on_screen_points") else {"on_screen_points": False})},
+        meta={"points": meta_points, "youtube_tags": youtube_tags or [], **({} if pi.setting("on_screen_points") else {"on_screen_points": False})},
     )
     plan = base_plan(pi, title=title)
     plan["points"] = plan_points

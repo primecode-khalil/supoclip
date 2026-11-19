@@ -155,7 +155,7 @@ def create_app(
         return JSONResponse(
             status_code=exc.status_code,
             content=jsonable_encoder({"detail": exc.detail, "trace_id": trace_id}),
-            headers={TRACE_HEADER: trace_id},
+            headers={**(exc.headers or {}), TRACE_HEADER: trace_id},
         )
 
     @app.exception_handler(RequestValidationError)
@@ -187,6 +187,12 @@ def create_app(
             headers={TRACE_HEADER: trace_id},
         )
 
+    from .api.routes.recording import router as recording_router
+    app.include_router(recording_router)
+    from .api.routes.home_proxy import router as home_proxy_router
+    app.include_router(home_proxy_router)
+    from .api.routes.recording_automation import router as recording_automation_router
+    app.include_router(recording_automation_router)
     app.include_router(tasks.router)
     from .api.routes.clip_exports import router as clip_export_router
     from .api.routes.editor import router as editor_router

@@ -48,7 +48,7 @@ def _locate(keywords=("pricing", "price"), chapters=(), suggested=("hiring", "fu
 
 def _moment(first, last, evidence=None, relevance=90, standalone=80, title="Why pricing scares founders", scores=(20, 18, 20, 17)):
     hook, engagement, value, share = scores
-    return TopicMoment(
+    return TopicMoment(youtube_tags=[],
         first_unit=first, last_unit=last, skips=[], evidence_unit=evidence or first, relevance=relevance, standalone=standalone,
         hook_title=title, hook_type="statement", hook_score=hook, engagement_score=engagement, value_score=value,
         shareability_score=share, why="Explains how they chose a price",
@@ -285,6 +285,8 @@ async def test_topic_finds_ranks_and_maps_every_strong_moment(monkeypatch):
         moments=[_moment(18, 25, evidence=20), _moment(58, 66, evidence=60, title="Founders fear this decision"),
                  _moment(148, 155, evidence=150, relevance=75), _moment(30, 37, relevance=40)],
     )
+    for moment in extraction.moments:
+        moment.youtube_tags = ["pricing", "Minecraft"]
     pi, model = _topic_setup(
         monkeypatch,
         {"TopicLocate": [_locate()], "TopicExtraction": _answering(extraction.moments),
@@ -304,6 +306,7 @@ async def test_topic_finds_ranks_and_maps_every_strong_moment(monkeypatch):
     assert first["max_seconds"] == 95.0 and first["junction_fades"] == [] and len(first["source_ranges"]) == 1
     assert first["relevance_score"] == 0.75 and first["hook_type"] == "statement"
     assert first["workflow_meta"]["topic"] == "Pricing"
+    assert all(segment["workflow_meta"]["youtube_tags"] == ["pricing"] for segment in segments)
     assert plan["topic"] == {"query": "pricing", "canonical": "Pricing", "coverage": "strong", "found": 2,
                              "suggested_topics": ["hiring", "fundraising", "growth"]}
     assert plan["title"] == "Pricing"

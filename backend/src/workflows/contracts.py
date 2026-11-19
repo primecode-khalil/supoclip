@@ -16,7 +16,7 @@ from .settings import SettingValue, default_of, read_settings
 
 WORKFLOWS: tuple[str, ...] = ("highlights", "series", "topic", "recap", "trailer")
 Workflow = Literal["highlights", "series", "topic", "recap", "trailer"]
-WORKFLOW_PLAN_VERSION = "wf-v1"  # bump to invalidate cached plans (not transcripts)
+WORKFLOW_PLAN_VERSION = "wf-v2-tags"  # new plans include clip-specific keyword suggestions
 OUTLINE_VERSION = "outline-v2"  # bump to invalidate cached outlines
 
 

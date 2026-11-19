@@ -166,6 +166,20 @@ async def test_highlights_from_cached_analysis_match_the_golden_output(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_fresh_highlight_tags_follow_the_final_cut_without_an_extra_ai_call(monkeypatch, tmp_path):
+    analysis = _analysis_object()
+    analysis.most_relevant_segments[0].youtube_tags = ["save money", "Minecraft"]
+    _source, calls = _legacy_environment(monkeypatch, tmp_path, analysis=analysis)
+    result = await VideoService.process_video_complete(
+        "upload://source.mp4", "video_url", processing_mode="balanced", cached_transcript="Existing transcript")
+    first = result["segments_to_render"][0]
+    assert "save money" in first["text"]
+    assert first["youtube_tags"] == ["save money"]
+    assert json.loads(result["analysis_json"])["most_relevant_segments"][0]["youtube_tags"] == ["save money"]
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_highlights_from_fresh_analysis_match_the_golden_output(monkeypatch, tmp_path):
     _source, calls = _legacy_environment(monkeypatch, tmp_path, max_clips=2)
 

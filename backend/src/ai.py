@@ -28,6 +28,7 @@ from .config import Config, get_config
 from .clip_duration import clip_duration
 from .runtime_settings import apply_settings_to_process_env
 from .workflows.prompts import instructions_block
+from .publishing_tags import YOUTUBE_TAG_INSTRUCTIONS, ground_youtube_tags, normalize_youtube_tags
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ IDEAL_CLIP_MIN_SECONDS = 25
 IDEAL_CLIP_MAX_SECONDS = 50
 MIN_ACCEPTED_CLIP_SECONDS = 15
 MAX_ACCEPTED_CLIP_SECONDS = 60
-TRANSCRIPT_ANALYSIS_CACHE_VERSION = "windowed-rerank-v6"
+TRANSCRIPT_ANALYSIS_CACHE_VERSION = "windowed-rerank-v6"  # keep existing transcript/source caches
 TRANSCRIPT_ANALYSIS_MAX_ATTEMPTS = 3
 TRANSCRIPT_ANALYSIS_TIMEOUT_SECONDS = 600
 # Long transcripts are analysed in overlapping windows so every part of the
@@ -257,6 +258,13 @@ class TranscriptSegment(BaseModel):
         description="Optional MM:SS end of that hook line (null with hook_start_time).",
     )
 
+    youtube_tags: list[str] = Field(default_factory=list, description="Up to 8 specific keywords copied from this clip's spoken content; [] if uncertain")
+
+    @field_validator("youtube_tags", mode="before")
+    @classmethod
+    def _clean_youtube_tags(cls, value: Any) -> list[str]:
+        return normalize_youtube_tags(value)
+
     @field_validator("relevance_score", mode="before")
     @classmethod
     def _coerce_percent_relevance_score(cls, value: Any) -> Any:
@@ -287,7 +295,7 @@ Your job is extraction and ranking, not creative rewriting. You must stay fully 
 OUTPUT CONTRACT:
 - Return valid JSON only. Do not output Markdown, headings, bullets, prose, code fences, explanations, or commentary outside the JSON object.
 - The top-level JSON object must include: "most_relevant_segments", "summary", and "key_topics".
-- Each item in "most_relevant_segments" must include: "start_time", "end_time", "text", "relevance_score", "reasoning", "virality", and "hook_title".
+- Each item in "most_relevant_segments" must include: "start_time", "end_time", "text", "relevance_score", "reasoning", "virality", "hook_title", and "youtube_tags".
 - Do not use "segment" as an output field. Use "text".
 - "virality" must include: "hook_score", "engagement_score", "value_score", "shareability_score", "total_score", "hook_type", and "virality_reasoning".
 - Every returned segment must be {minimum}-{maximum} seconds long. Prefer {ideal_minimum}-{ideal_maximum} seconds.
@@ -432,7 +440,7 @@ def build_transcript_system_prompt(clip_length: str = "auto") -> str:
     return transcript_analysis_system_prompt.format(
         minimum=bounds.minimum, maximum=bounds.maximum,
         ideal_minimum=bounds.ideal_minimum, ideal_maximum=bounds.ideal_maximum,
-    )
+    ) + "\n\n" + YOUTUBE_TAG_INSTRUCTIONS
 
 
 # Lazy-loaded agent to avoid import-time failures when API keys aren't set
@@ -498,10 +506,16 @@ def _get_missing_llm_key_error(model_name: str, runtime_config: Config) -> Optio
     return None
 
 
+# Anthropic models the installed SDK has no profile for. They support native
+# structured output; without it, output falls back to a tool call with the
+# SDK's 4096-token cap, which cuts long schemas such as the source outline short.
+_NATIVE_OUTPUT_ANTHROPIC_MODELS = frozenset({"claude-sonnet-5-5", "claude-haiku-5-5"})
+
+
 def _uses_native_output(model_name: str) -> bool:
     provider, name = _split_llm_name(model_name)
     return provider == "openrouter" or (
-        provider == "anthropic" and name == "claude-sonnet-5-5"
+        provider == "anthropic" and name in _NATIVE_OUTPUT_ANTHROPIC_MODELS
     )
 
 
@@ -511,8 +525,8 @@ def _build_transcript_model(
     model_name = model_name or runtime_config.llm
     provider, provider_model_name = _split_llm_name(model_name)
     if provider == "anthropic" and _uses_native_output(model_name):
-        # The installed SDK predates Sonnet 5.5. This model requires native
-        # structured output rather than forced tool calls.
+        # The installed SDK predates Sonnet 5.5 and Haiku 5.5. Sonnet 5.5 rejects
+        # forced tool calls; both need native structured output.
         profile = AnthropicProvider.model_profile(provider_model_name).update(
             AnthropicModelProfile(supports_json_schema_output=True)
         )
@@ -887,7 +901,7 @@ JSON-only output requirements:
 - Return one valid JSON object and nothing else.
 - No Markdown, headings, bullets, code fences, or explanatory text outside JSON.
 - Top-level keys: "most_relevant_segments", "summary", "key_topics".
-- Segment keys: "start_time", "end_time", "text", "relevance_score", "reasoning", "virality", "hook_title".
+- Segment keys: "start_time", "end_time", "text", "relevance_score", "reasoning", "virality", "hook_title", "youtube_tags".
 - Optional segment keys "hook_start_time"/"hook_end_time": null unless a later 2-5 second line stands alone and the real opening is already a complete setup. The clip is not replayed from that line by default.
 - "hook_title" is a 3-9 word plain-text headline for the clip, in the transcript's language, grounded in the segment (no hashtags, emojis, or quotes).
 - Virality keys: "hook_score", "engagement_score", "value_score", "shareability_score", "total_score", "hook_type", "virality_reasoning".
@@ -1631,6 +1645,7 @@ def _validate_segments(
                     segment.virality.total_score = calculated_total
 
             segment.hook_title = sanitize_hook_title(segment.hook_title)
+            segment.youtube_tags = ground_youtube_tags(segment.youtube_tags, segment.text)
             # Bounds are final here (after snapping and repair): keep the teaser
             # only when it still sits inside the clip.
             _sanitize_hook_span(segment, start_seconds, end_seconds)

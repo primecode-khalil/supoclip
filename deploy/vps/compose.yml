@@ -1,0 +1,333 @@
+# Standalone production bundle; invoke through ./compose.sh, not the development file.
+name: supoclip-vps
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "3"
+
+x-backend-env: &backend-env
+  PYTHONPATH: /app
+  PYTHONUNBUFFERED: "1"
+  DATABASE_URL: postgresql+asyncpg://supoclip:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/supoclip
+  DATABASE_POOL_SIZE: ${DATABASE_POOL_SIZE:-5}
+  DATABASE_MAX_OVERFLOW: ${DATABASE_MAX_OVERFLOW:-0}
+  DATABASE_POOL_TIMEOUT_SECONDS: ${DATABASE_POOL_TIMEOUT_SECONDS:-10}
+  DATABASE_IDLE_SESSION_TIMEOUT_SECONDS: ${DATABASE_IDLE_SESSION_TIMEOUT_SECONDS:-600}
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD}
+  TEMP_DIR: /app/uploads
+  MEDIA_STORAGE: local
+  SELF_HOST: "true"
+  ALLOW_UNSIGNED_BACKEND_AUTH: "false"
+  BACKEND_AUTH_SECRET: ${BACKEND_AUTH_SECRET:?Set BACKEND_AUTH_SECRET}
+  APP_SETTINGS_ENCRYPTION_KEY: ${APP_SETTINGS_ENCRYPTION_KEY:?Set APP_SETTINGS_ENCRYPTION_KEY}
+  CORS_ORIGINS: ${APP_ORIGIN:?Set APP_ORIGIN}
+  NEXT_PUBLIC_APP_URL: ${APP_ORIGIN}
+  TRANSCRIPTION_PROVIDER: ${TRANSCRIPTION_PROVIDER:-assemblyai}
+  TRANSCRIPTION_LANGUAGE: ${TRANSCRIPTION_LANGUAGE:-}
+  WHISPER_MODEL_SIZE: ${WHISPER_MODEL_SIZE:-base}
+  ASSEMBLY_AI_API_KEY: ${ASSEMBLY_AI_API_KEY:-}
+  LLM: ${LLM:-}
+  RERANK_LLM: ${RERANK_LLM:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+  GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-}
+  OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
+  PEXELS_API_KEY: ${PEXELS_API_KEY:-}
+  MAX_VIDEO_UPLOAD_BYTES: ${MAX_VIDEO_UPLOAD_BYTES:-4000000000}
+  # Ten-minute windows produce 144 uploads/day for one continuously live channel.
+  MEDIA_UPLOAD_DAILY_LIMIT: ${MEDIA_UPLOAD_DAILY_LIMIT:-500}
+  DEFAULT_PROCESSING_MODE: ${DEFAULT_PROCESSING_MODE:-balanced}
+  VIDEO_JOB_USER_CONCURRENCY: ${VIDEO_JOB_USER_CONCURRENCY:-1}
+  QUEUED_TASK_TIMEOUT_SECONDS: ${QUEUED_TASK_TIMEOUT_SECONDS:-1800}
+  SOCIAL_PUBLISHING_ACCESS: ${SOCIAL_PUBLISHING_ACCESS:-all}
+  SOCIAL_PUBLISHING_PROVIDERS: ${SOCIAL_PUBLISHING_PROVIDERS:-youtube,instagram,tiktok}
+  SOCIAL_PUBLISHING_ALLOWED_EMAILS: ${SOCIAL_PUBLISHING_ALLOWED_EMAILS:-}
+  YOUTUBE_OAUTH_CLIENT_ID: ${YOUTUBE_OAUTH_CLIENT_ID:-}
+  YOUTUBE_OAUTH_CLIENT_SECRET: ${YOUTUBE_OAUTH_CLIENT_SECRET:-}
+  YOUTUBE_DATA_API_KEY: ${YOUTUBE_DATA_API_KEY:-}
+  YOUTUBE_PROXY_URL: ${YOUTUBE_PROXY_URL:-}
+  YOUTUBE_PROXY_COUNTRY: ${YOUTUBE_PROXY_COUNTRY:-}
+  YOUTUBE_POT_PROVIDER_URL: ${YOUTUBE_POT_PROVIDER_URL:-}
+  HOME_PROXY_SSH_HOST: ${HOME_PROXY_SSH_HOST:-}
+  HOME_PROXY_SSH_PORT: ${HOME_PROXY_SSH_PORT:-2222}
+  HOME_PROXY_SSH_USER: ${HOME_PROXY_SSH_USER:-supoclip-relay}
+  HOME_PROXY_SSH_HOST_KEY: ${HOME_PROXY_SSH_HOST_KEY:-}
+  HOME_PROXY_REMOTE_BIND: ${HOME_PROXY_REMOTE_BIND:-}
+  HOME_PROXY_REMOTE_PORT: ${HOME_PROXY_REMOTE_PORT:-18888}
+  HOME_PROXY_URL: ${HOME_PROXY_URL:-}
+  HOME_PROXY_APP_ORIGIN: ${HOME_PROXY_APP_ORIGIN:-}
+  INSTAGRAM_APP_ID: ${INSTAGRAM_APP_ID:-}
+  INSTAGRAM_APP_SECRET: ${INSTAGRAM_APP_SECRET:-}
+  # Native web callbacks and signed media routes live in Next.js, not FastAPI.
+  SOCIAL_OAUTH_REDIRECT_BASE_URL: ${APP_ORIGIN}
+  SOCIAL_PUBLIC_MEDIA_BASE_URL: ${APP_ORIGIN}
+  WORKFLOWS_ACCESS: ${WORKFLOWS_ACCESS:-all}
+  AWS_REGION: ${AWS_REGION:-}
+  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+  SES_FROM_EMAIL: ${SES_FROM_EMAIL:-onboarding@example.com}
+
+x-backend: &backend
+  image: supoclip-vps-backend:${RELEASE_TAG:-local}
+  build:
+    context: ../../backend
+    dockerfile: Dockerfile
+    args:
+      BACKEND_CPU_ONLY: ${BACKEND_CPU_ONLY:-true}
+  platform: ${BACKEND_PLATFORM:-linux/amd64}
+  init: true
+  restart: unless-stopped
+  logging: *logging
+  volumes:
+    - uploads:/app/uploads
+    - clips:/app/clips
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: supoclip-vps-postgres:${RELEASE_TAG:-local}
+    build:
+      context: ./postgres
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      POSTGRES_DB: supoclip
+      POSTGRES_USER: supoclip
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../../init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U supoclip -d supoclip"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    stop_grace_period: 60s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD}
+    command: [sh, -c, 'exec docker-entrypoint.sh redis-server --appendonly yes --appendfsync everysec --requirepass "$$REDIS_PASSWORD"']
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [CMD-SHELL, 'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli ping | grep -qx PONG']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    stop_grace_period: 30s
+
+  backend:
+    <<: *backend
+    command: [.venv/bin/uvicorn, src.main:app, --host, 0.0.0.0, --port, "8000"]
+    environment:
+      <<: *backend-env
+      SUPOCLIP_SERVICE: backend
+    volumes:
+      - uploads:/app/uploads
+      - clips:/app/clips
+      - ./configure-recording.py:/opt/supoclip-operator.py:ro
+    healthcheck:
+      test: [CMD, curl, -fsS, http://localhost:8000/health/db]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    stop_grace_period: 60s
+
+  worker:
+    <<: *backend
+    command: [.venv/bin/python, -m, src.workers.run_workers]
+    environment:
+      <<: *backend-env
+      SUPOCLIP_SERVICE: worker
+      EMBED_CRON_WORKER: "0"
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, .venv/bin/arq, --check, src.workers.tasks.WorkerSettings]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+    stop_grace_period: 3h
+
+  cron-worker:
+    <<: *backend
+    command: [.venv/bin/arq, src.workers.cron_worker.CronWorkerSettings]
+    environment:
+      <<: *backend-env
+      SUPOCLIP_SERVICE: cron-worker
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, .venv/bin/arq, --check, src.workers.cron_worker.CronWorkerSettings]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+    stop_grace_period: 60s
+
+  ai-worker:
+    <<: *backend
+    command: [.venv/bin/arq, src.workers.ai_worker.AIWorkerSettings]
+    environment:
+      <<: *backend-env
+      SUPOCLIP_SERVICE: ai-worker
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, .venv/bin/arq, --check, src.workers.ai_worker.AIWorkerSettings]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+    stop_grace_period: 60s
+
+  recorder:
+    <<: *backend
+    command: [.venv/bin/python, -m, src.workers.recording_supervisor]
+    environment:
+      <<: *backend-env
+      SUPOCLIP_SERVICE: recorder
+      CAPTURE_ROOT: /data/recordings
+      RECORDING_API_URL: http://backend:8000
+      RECORDING_MIN_FREE_GB: ${RECORDING_MIN_FREE_GB:-5}
+      RECORDING_MAX_CHANNELS: ${RECORDING_MAX_CHANNELS:-4}
+      RECORDING_MAX_BACKLOG: ${RECORDING_MAX_BACKLOG:-24}
+      RECORDING_ARCHIVE_REMOTE: ${RECORDING_ARCHIVE_REMOTE:-}
+      RCLONE_CONFIG: /config/rclone/rclone.conf
+    volumes:
+      - recordings:/data/recordings
+      - ./rclone.conf:/config/rclone/rclone.conf:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, .venv/bin/python, -m, src.workers.recording_supervisor, --healthcheck]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+    stop_grace_period: 90s
+
+  frontend:
+    image: supoclip-vps-frontend:${RELEASE_TAG:-local}
+    build:
+      context: ../..
+      dockerfile: frontend/Dockerfile
+      target: runner
+      args:
+        NEXT_PUBLIC_API_URL: ${API_ORIGIN:?Set API_ORIGIN}
+        NEXT_PUBLIC_APP_URL: ${APP_ORIGIN}
+        NEXT_PUBLIC_SELF_HOST: "true"
+        NEXT_PUBLIC_SELF_HOST_SINGLE_USER: ${SELF_HOST_SINGLE_USER:-true}
+        NEXT_PUBLIC_SOCIAL_PUBLISHING: ${NEXT_PUBLIC_SOCIAL_PUBLISHING:-true}
+        NEXT_PUBLIC_MAX_VIDEO_UPLOAD_BYTES: ${MAX_VIDEO_UPLOAD_BYTES:-4000000000}
+    restart: unless-stopped
+    init: true
+    logging: *logging
+    environment:
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
+      DATABASE_URL: postgresql://supoclip:${POSTGRES_PASSWORD}@postgres:5432/supoclip
+      BACKEND_INTERNAL_URL: http://backend:8000
+      UPLOAD_PUBLIC_URL: ${UPLOAD_PUBLIC_URL:-}
+      BACKEND_AUTH_SECRET: ${BACKEND_AUTH_SECRET}
+      APP_SETTINGS_ENCRYPTION_KEY: ${APP_SETTINGS_ENCRYPTION_KEY}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?Set BETTER_AUTH_SECRET}
+      BETTER_AUTH_URL: ${APP_ORIGIN}
+      BETTER_AUTH_TRUSTED_ORIGINS: ${APP_ORIGIN}
+      NEXT_PUBLIC_APP_URL: ${APP_ORIGIN}
+      NEXT_PUBLIC_API_URL: ${API_ORIGIN}
+      NEXT_PUBLIC_SELF_HOST: "true"
+      NEXT_PUBLIC_SOCIAL_PUBLISHING: ${NEXT_PUBLIC_SOCIAL_PUBLISHING:-true}
+      DISABLE_SIGN_UP: ${DISABLE_SIGN_UP:-false}
+      SELF_HOST_SINGLE_USER: ${SELF_HOST_SINGLE_USER:-true}
+      NEXT_PUBLIC_SELF_HOST_SINGLE_USER: ${SELF_HOST_SINGLE_USER:-true}
+      INITIAL_SETUP_TOKEN: ${INITIAL_SETUP_TOKEN:?Set INITIAL_SETUP_TOKEN}
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, curl, -fsS, http://localhost:3107/api/auth/get-session]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    stop_grace_period: 60s
+
+  caddy:
+    image: caddy:2.11.9-alpine
+    restart: unless-stopped
+    logging: *logging
+    ports:
+      - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-3107}:80"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:-localhost}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:2019/config/]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Invoked only after the runbook's quiescence gate; no helper image download.
+  snapshot:
+    <<: *backend
+    profiles: [maintenance]
+    restart: "no"
+    command: [.venv/bin/python, /opt/snapshot.py]
+    network_mode: none
+    depends_on: {}
+    environment: {}
+    volumes:
+      - uploads:/sources/uploads:ro
+      - clips:/sources/clips:ro
+      - recordings:/sources/recordings:ro
+      - ./snapshot.py:/opt/snapshot.py:ro
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads:
+  clips:
+  recordings:
+  caddy_data:
+  caddy_config:

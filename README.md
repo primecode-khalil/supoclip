@@ -30,6 +30,8 @@
 
 SupoClip is an open-source, AI-powered video clipping tool. Give it a long video — a podcast, a talk, a stream VOD — and it finds the most viral-worthy moments, scores them, and renders them as vertical 9:16 clips with face-centered cropping, word-synced subtitles, hook titles, and optional B-roll. Run it yourself, customize it, inspect it — or use the hosted version and skip the setup.
 
+**This fork adds autonomous live recording and a Linux installer.** Run `bash install.sh` from this checkout, create the protected first owner in the browser, configure AI/social apps in **Admin**, and manage streams in **Live channels**. It uses SupoClip's existing captions, reframing, editor and publishing workers. See the [installation and operation guide](docs/vps-autonomy.md) and [fork research](docs/research/forks/summary.md). Automated publishing currently covers YouTube and Instagram; TikTok remains available through the native manual publishing flow, and Facebook is not implemented.
+
 **See it first:** [watch real clips SupoClip generated](https://www.supoclip.com/demo) from a long-form interview, or follow the [self-hosting tutorial](https://www.supoclip.com/blog/self-host-supoclip-docker) to run it on your own machine.
 
 ## Ways to Use SupoClip

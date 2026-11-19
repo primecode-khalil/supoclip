@@ -10,6 +10,9 @@ programmatic clients (MCP, scripts) can publish too.
 from __future__ import annotations
 
 import logging
+import hashlib
+import json
+import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -23,6 +26,12 @@ from ...config import get_config
 from ...database import get_db
 from ...media_storage import is_s3
 from ...services.social_service import SocialError, SocialService
+from ...repositories.social_repository import SocialRepository
+from ...source_identity import source_admission_lock
+from ...services.social_publication_policy import PublishingPolicy, SocialPublicationPolicyService
+from ...services.social_source_deletion import SourceDeletionSelection
+from ...services.social_review_service import SocialReviewService, ReviewImport, ReviewCandidate, ReviewApproval
+from typing import Literal
 from ...utils.async_helpers import run_in_thread
 
 logger = logging.getLogger(__name__)
@@ -106,6 +115,92 @@ async def list_connections(request: Request, db: AsyncSession = Depends(get_db))
     return {"connections": connections, "total": len(connections)}
 
 
+@router.get("/youtube/setup")
+async def youtube_setup(request: Request, db: AsyncSession = Depends(get_db)):
+    user_id = await _allowed_user_id(request, db, session_only=True)
+    return await _service(request, db).youtube_setup(user_id)
+
+
+@router.get("/accounts/{account_id}/automation")
+async def get_publication_policy(account_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    user_id = await _allowed_user_id(request, db)
+    try:
+        return await SocialPublicationPolicyService(db).get(user_id, account_id)
+    except SocialError as exc:
+        raise _http_error(exc)
+
+
+@router.put("/accounts/{account_id}/automation")
+async def save_publication_policy(account_id: str, body: PublishingPolicy, request: Request, db: AsyncSession = Depends(get_db)):
+    user_id = await _allowed_user_id(request, db, session_only=True)
+    try:
+        return await SocialPublicationPolicyService(db).save(user_id, account_id, body.model_dump(mode="json", exclude_unset=True))
+    except SocialError as exc:
+        raise _http_error(exc)
+
+
+@router.post("/deletion-impact")
+async def source_deletion_impact(body: SourceDeletionSelection, request: Request, db: AsyncSession = Depends(get_db)):
+    # Deletion recovery stays available even when publishing intake is disabled.
+    user_id = _session_user_id(request)
+    return await SocialRepository.deletion_impact(db,user_id,body.task_ids,clip_id=body.clip_id)
+
+
+@router.get("/review")
+async def list_review(request: Request, account_id: str, status: Literal["pending", "approved", "rejected", "cancelled"] = "pending",
+                      limit: int = 50, db: AsyncSession = Depends(get_db)):
+    user_id = await _allowed_user_id(request, db)
+    try:
+        return await SocialReviewService(_service(request, db)).list(user_id, account_id, status, max(1, min(200, limit)))
+    except SocialError as exc:
+        raise _http_error(exc)
+
+
+@router.post("/review/import")
+async def import_review(body: ReviewImport, request: Request, db: AsyncSession = Depends(get_db)):
+    user_id = await _allowed_user_id(request, db, session_only=True)
+    try:
+        return await SocialReviewService(_service(request, db)).import_clips(user_id, body)
+    except SocialError as exc:
+        raise _http_error(exc)
+
+
+@router.post("/review/candidates")
+async def add_review_candidate(body: ReviewCandidate, request: Request, db: AsyncSession = Depends(get_db)):
+    user_id = await _allowed_user_id(request, db)
+    try:
+        return await SocialReviewService(_service(request, db)).candidate(user_id, body.account_id, body.task_id, body.clip_id)
+    except SocialError as exc:
+        raise _http_error(exc)
+
+
+@router.post("/review/{identity}/approve")
+async def approve_review(identity: str, body: ReviewApproval, request: Request, db: AsyncSession = Depends(get_db)):
+    user_id = await _allowed_user_id(request, db, session_only=True)
+    try:
+        return await SocialReviewService(_service(request, db)).approve(user_id, identity, body)
+    except SocialError as exc:
+        raise _http_error(exc)
+
+
+@router.post("/review/{identity}/reject")
+async def reject_review(identity: str, request: Request, db: AsyncSession = Depends(get_db)):
+    user_id = await _allowed_user_id(request, db, session_only=True)
+    try:
+        return await SocialReviewService(_service(request, db)).decide(user_id, identity)
+    except SocialError as exc:
+        raise _http_error(exc)
+
+
+@router.post("/review/{identity}/undo")
+async def undo_review(identity: str, request: Request, db: AsyncSession = Depends(get_db)):
+    user_id = await _allowed_user_id(request, db, session_only=True)
+    try:
+        return await SocialReviewService(_service(request, db)).decide(user_id, identity, undo=True)
+    except SocialError as exc:
+        raise _http_error(exc)
+
+
 @router.get("/connections/{account_id}/publishing-options")
 async def publishing_options(account_id: str, request: Request, db: AsyncSession = Depends(get_db)):
     user_id = await _allowed_user_id(request, db)
@@ -157,7 +252,10 @@ async def complete_connection(
 async def disconnect_all_accounts(request: Request, db: AsyncSession = Depends(get_db)):
     """Disconnect (and revoke at the platform) every account; used on account deletion."""
     user_id = _session_user_id(request)
-    removed = await _service(request, db).disconnect_all(user_id)
+    try:
+        removed = await _service(request, db).disconnect_all(user_id)
+    except SocialError as exc:
+        raise _http_error(exc)
     return {"message": "Accounts disconnected", "removed": removed}
 
 
@@ -166,7 +264,10 @@ async def disconnect_account(
     account_id: str, request: Request, db: AsyncSession = Depends(get_db)
 ):
     user_id = _session_user_id(request)
-    removed = await _service(request, db).disconnect(user_id, account_id)
+    try:
+        removed = await _service(request, db).disconnect(user_id, account_id)
+    except SocialError as exc:
+        raise _http_error(exc)
     if not removed:
         raise HTTPException(status_code=404, detail="Connected account not found")
     return {"message": "Account disconnected"}
@@ -183,12 +284,15 @@ async def list_posts(
     clip_id: Optional[str] = None,
     status: Optional[str] = None,
     limit: int = 100,
+    account_id: Optional[str] = None,
+    status_group: Optional[Literal["active", "history"]] = None,
+    offset: int = 0,
 ):
     user_id = await _allowed_user_id(request, db)
     posts = await _service(request, db).list_posts(
-        user_id, task_id=task_id, clip_id=clip_id, status=status, limit=limit
+        user_id, task_id=task_id, clip_id=clip_id, status=status, limit=limit, account_id=account_id, status_group=status_group, offset=offset
     )
-    return {"posts": posts, "total": len(posts)}
+    return {"posts": posts, "total": len(posts), "next_offset": max(0, offset)+len(posts) if len(posts)==max(1,min(limit,500)) else None}
 
 
 @router.post("/captions")
@@ -212,6 +316,24 @@ async def create_post(request: Request, db: AsyncSession = Depends(get_db)):
     """Publish (or schedule) a clip to a connected account."""
     user_id = await _allowed_user_id(request, db)
     body = await _json_body(request)
+    key = request.headers.get("idempotency-key", "").strip()
+    if key and not re.fullmatch(r"[A-Za-z0-9._:-]{8,200}", key):
+        raise HTTPException(status_code=400, detail="Invalid idempotency key")
+    if not key:
+        return await _create_post(request, db, user_id, body)
+    request_hash = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    async with source_admission_lock(db, user_id, f"social-post:{key}"):
+        receipt = await SocialRepository.get_post_request(db, user_id, key)
+        if receipt:
+            if receipt.request_hash != request_hash:
+                raise HTTPException(status_code=409, detail="Idempotency key already used for a different publication")
+            if receipt.post_id is None:
+                raise HTTPException(status_code=410, detail="Publication history was deleted; this request will not create another upload")
+            return {"post": await SocialRepository.get_user_post(db, user_id, receipt.post_id)}
+        return await _create_post(request, db, user_id, body, key, request_hash)
+
+
+async def _create_post(request, db, user_id, body, request_key=None, request_hash=None):
     for field in ("task_id", "clip_id", "social_account_id"):
         if not body.get(field):
             raise HTTPException(status_code=422, detail=f"{field} is required")
@@ -229,6 +351,7 @@ async def create_post(request: Request, db: AsyncSession = Depends(get_db)):
             hashtags=hashtags,
             privacy_level=body.get("privacy_level"),
             scheduled_for=body.get("scheduled_for"),
+            **({"request_key": request_key, "request_hash": request_hash} if request_key else {}),
         )
     except SocialError as exc:
         raise _http_error(exc)
@@ -265,6 +388,19 @@ async def cancel_post(post_id: str, request: Request, db: AsyncSession = Depends
     user_id = await _allowed_user_id(request, db)
     try:
         return {"post": await _service(request, db).cancel_post(user_id, post_id)}
+    except SocialError as exc:
+        raise _http_error(exc)
+
+
+@router.post("/posts/{post_id}/reschedule")
+async def reschedule_post(post_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    user_id = await _allowed_user_id(request, db, session_only=True)
+    body = await _json_body(request)
+    custom = body.get("custom_local")
+    if not isinstance(custom, str) or not 1 <= len(custom) <= 32:
+        raise HTTPException(status_code=400, detail="Choose a future local publication time.")
+    try:
+        return {"post": await _service(request, db).reschedule_post(user_id, post_id, custom)}
     except SocialError as exc:
         raise _http_error(exc)
 

@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowRight, Bot, ChartColumn, CornerDownLeft, Film, ListChecks, ListOrdered, LogOut, Play, Plus, Search, Settings, Share2, Shield, Sparkles, Target,
+  ArrowRight, Bot, ChartColumn, CornerDownLeft, Film, ListChecks, ListOrdered, LogOut, Play, Plus, Radio, Search, Settings, Share2, Shield, Sparkles, Target,
 } from "lucide-react";
 import { toast } from "sonner";
 import { signOut, useSession } from "@/lib/auth-client";
@@ -26,14 +26,15 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Kbd } from "@/components/ui/kbd";
 import { cn } from "@/lib/utils";
 
-// `mobile: false` keeps an item out of the five-slot mobile tab bar.
+// `mobile: false` keeps an item out of the mobile tab bar.
 // `social: true` items only show when social publishing is enabled for the user.
-type NavItem = { href: string; labelKey: "create" | "library" | "social" | "analytics" | "agents" | "settings"; icon: typeof Film; match: (path: string) => boolean; mobile?: boolean; social?: boolean };
+type NavItem = { href: string; labelKey: "create" | "library" | "social" | "analytics" | "agents" | "settings" | "recording"; icon: typeof Film; match: (path: string) => boolean; mobile?: boolean; social?: boolean };
 
 const NAV: NavItem[] = [
   { href: "/", labelKey: "create", icon: Sparkles, match: (p) => p === "/" },
   { href: "/list", labelKey: "library", icon: Film, match: (p) => p.startsWith("/list") || p.startsWith("/tasks") },
-  { href: "/settings/social", labelKey: "social", icon: Share2, match: (p) => p.startsWith("/settings/social"), social: true },
+  { href: "/recording", labelKey: "recording", icon: Radio, match: (p) => p.startsWith("/recording") },
+  { href: "/publishing", labelKey: "social", icon: Share2, match: (p) => p.startsWith("/publishing") || p.startsWith("/settings/social"), social: true },
   { href: "/analytics", labelKey: "analytics", icon: ChartColumn, match: (p) => p.startsWith("/analytics"), social: true },
   { href: "/settings/api-keys", labelKey: "agents", icon: Bot, match: (p) => p.startsWith("/settings/api-keys"), mobile: false },
   { href: "/settings", labelKey: "settings", icon: Settings, match: (p) => p === "/settings" },
@@ -81,7 +82,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useAppTheme(Boolean(user));
   const admin = Boolean((user as { is_admin?: boolean } | undefined)?.is_admin);
   const socialAccess = useSocialAccess(Boolean(user));
-  const labeled = NAV.map((item) => ({ ...item, label: t(`nav.${item.labelKey}`) }));
+  const labeled = NAV.map((item) => ({ ...item, label: item.labelKey === "recording" ? "Live channels" : item.labelKey === "social" ? "Publishing" : t(`nav.${item.labelKey}`) }));
   const nav = labeled.filter((item) => !item.social || socialAccess === true);
   const mobileNav = nav.filter((item) => item.mobile !== false);
   const items = admin ? [...nav, { href: "/admin", label: t("nav.admin"), icon: Shield, match: (p: string) => p.startsWith("/admin") }] : nav;
@@ -300,7 +301,8 @@ function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (
         id: `new-${shortcut.id}`, label: tHome(`palette.${shortcut.id}`), href: `/?workflow=${shortcut.id}`, icon: shortcut.icon,
       })),
       { id: "library", label: t("palette.library"), href: "/list", icon: Film },
-      ...(socialAccess === true ? [{ id: "social", label: t("palette.social"), hint: t("palette.socialHint"), href: "/settings/social", icon: Share2 },
+      { id: "recording", label: "Live channels", hint: "Monitor streams and automate clipping", href: "/recording", icon: Radio },
+      ...(socialAccess === true ? [{ id: "social", label: "Publishing", hint: "Review clips and schedule YouTube Shorts", href: "/publishing", icon: Share2 },
       { id: "analytics", label: t("nav.analytics"), hint: t("palette.analyticsHint"), href: "/analytics", icon: ChartColumn }] : []),
       { id: "keys", label: t("nav.agents"), hint: t("palette.agentsHint"), href: "/settings/api-keys", icon: Bot },
       { id: "settings", label: t("nav.settings"), href: "/settings", icon: Settings },

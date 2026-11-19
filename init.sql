@@ -43,6 +43,20 @@ CREATE TABLE users (
     pending_plan_invoice_id VARCHAR(255)
 );
 
+-- Idempotency-Key for task creation. A key names one create request for its
+-- user, and a repeat within the retention window returns the task it made
+-- instead of a second charged one. The row is inserted in the task's own
+-- transaction. task_id has no foreign key: like minute_usage_events, deleting
+-- the task must not free the key and let a late retry charge again.
+CREATE TABLE IF NOT EXISTS task_idempotency_keys (
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    idempotency_key TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, idempotency_key)
+);
+
 -- Source table (created before tasks since tasks reference sources)
 CREATE TABLE sources (
     id VARCHAR(36) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
@@ -390,3 +404,322 @@ CREATE TRIGGER update_app_settings_updated_at BEFORE UPDATE ON app_settings FOR 
 CREATE TRIGGER update_session_updatedAt BEFORE UPDATE ON session FOR EACH ROW EXECUTE FUNCTION update_updatedAt_column();
 CREATE TRIGGER update_account_updatedAt BEFORE UPDATE ON account FOR EACH ROW EXECUTE FUNCTION update_updatedAt_column();
 CREATE TRIGGER update_verification_updatedAt BEFORE UPDATE ON verification FOR EACH ROW EXECUTE FUNCTION update_updatedAt_column();
+
+-- Recording bookkeeping only. No capture process or media paths are registered here.
+CREATE TABLE IF NOT EXISTS recording_channels (
+    id VARCHAR(36) PRIMARY KEY,
+    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    platform VARCHAR(20) NOT NULL,
+    handle VARCHAR(255) NOT NULL,
+    url VARCHAR(500) NOT NULL,
+    name VARCHAR(120) NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    quality VARCHAR(255) NOT NULL DEFAULT 'best',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT ck_recording_channel_platform CHECK (platform IN ('twitch', 'kick', 'youtube'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_recording_channel_identity ON recording_channels (user_id, platform, handle);
+
+CREATE TABLE IF NOT EXISTS recording_sessions (
+    id VARCHAR(36) PRIMARY KEY,
+    channel_id VARCHAR(36) NOT NULL REFERENCES recording_channels(id) ON DELETE CASCADE,
+    external_id VARCHAR(255) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'created',
+    settings_snapshot JSONB NOT NULL,
+    started_at TIMESTAMPTZ,
+    ended_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT ck_recording_session_status CHECK (status IN ('created', 'recording', 'interrupted', 'completed', 'failed', 'cancelled')),
+    CONSTRAINT ck_recording_session_terminal_time CHECK ((status IN ('completed', 'failed', 'cancelled')) = (ended_at IS NOT NULL)),
+    CONSTRAINT ck_recording_session_started_time CHECK (status NOT IN ('recording', 'interrupted', 'completed') OR started_at IS NOT NULL),
+    CONSTRAINT ck_recording_session_created_time CHECK (status <> 'created' OR started_at IS NULL),
+    CONSTRAINT ck_recording_session_started_order CHECK (started_at IS NULL OR started_at >= created_at),
+    CONSTRAINT ck_recording_session_ended_order CHECK (ended_at IS NULL OR ended_at >= COALESCE(started_at, created_at))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_recording_session_external_id ON recording_sessions (channel_id, external_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_recording_session_active ON recording_sessions (channel_id) WHERE status IN ('created', 'recording', 'interrupted');
+CREATE INDEX IF NOT EXISTS ix_recording_sessions_channel_created ON recording_sessions (channel_id, created_at, id);
+
+
+-- Fork extension: 20261116_0002_recording_automation.sql
+-- Policy is opt-in. Leases persist fencing generations across process restarts.
+CREATE TABLE IF NOT EXISTS recording_automation (
+    channel_id VARCHAR(36) PRIMARY KEY REFERENCES recording_channels(id) ON DELETE CASCADE,
+    policy JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS recording_automation_leases (
+    channel_id VARCHAR(36) PRIMARY KEY REFERENCES recording_channels(id) ON DELETE CASCADE,
+    holder VARCHAR(255) NOT NULL,
+    fence BIGINT NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    last_heartbeat_at TIMESTAMPTZ NOT NULL,
+    last_error TEXT,
+    CONSTRAINT ck_recording_lease_fence CHECK (fence > 0)
+);
+CREATE TABLE IF NOT EXISTS recording_windows (
+    id VARCHAR(36) PRIMARY KEY,
+    channel_id VARCHAR(36) NOT NULL REFERENCES recording_channels(id) ON DELETE CASCADE,
+    session_id VARCHAR(36) NOT NULL REFERENCES recording_sessions(id) ON DELETE CASCADE,
+    epoch VARCHAR(80) NOT NULL,
+    sequence INTEGER NOT NULL,
+    source_path VARCHAR(1024) NOT NULL,
+    sha256 VARCHAR(64) NOT NULL,
+    size_bytes BIGINT NOT NULL,
+    start_seconds DOUBLE PRECISION NOT NULL,
+    end_seconds DOUBLE PRECISION NOT NULL,
+    overlap_seconds DOUBLE PRECISION NOT NULL DEFAULT 0,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    task_id VARCHAR(36) REFERENCES tasks(id) ON DELETE SET NULL,
+    upload_ref VARCHAR(1024),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TIMESTAMPTZ,
+    last_error TEXT,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT ck_recording_window_status CHECK (status IN ('pending', 'submitting', 'processing', 'publishing', 'completed', 'blocked')),
+    CONSTRAINT ck_recording_window_counts CHECK (sequence >= 0 AND size_bytes > 0 AND attempts >= 0),
+    CONSTRAINT ck_recording_window_range CHECK (start_seconds >= 0 AND end_seconds > start_seconds AND end_seconds < 'Infinity'::double precision AND overlap_seconds >= 0 AND overlap_seconds < end_seconds - start_seconds),
+    CONSTRAINT ck_recording_window_hash CHECK (sha256 ~ '^[0-9a-f]{64}$')
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_recording_window_identity ON recording_windows (channel_id, session_id, epoch, sequence);
+CREATE INDEX IF NOT EXISTS ix_recording_windows_pending ON recording_windows (channel_id, status, next_attempt_at, created_at);
+
+-- Frontend schema compatibility on fresh Linux installs
+-- Mirror the frontend routing migration for fresh backend/bootstrap databases.
+ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "stripe_account_id" VARCHAR(255);
+CREATE TABLE IF NOT EXISTS "stripe_webhook_events" (
+  "id" VARCHAR(255) PRIMARY KEY,
+  "type" VARCHAR(255) NOT NULL,
+  "created_at" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+ALTER TABLE "stripe_webhook_events"
+  ADD COLUMN IF NOT EXISTS "status" VARCHAR(20) NOT NULL DEFAULT 'processed',
+  ADD COLUMN IF NOT EXISTS "claim_token" VARCHAR(255),
+  ADD COLUMN IF NOT EXISTS "lease_expires_at" TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS "stripe_account_migrations" (
+  "id" VARCHAR(255) PRIMARY KEY,
+  "user_id" VARCHAR(255) NOT NULL UNIQUE REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+  "source_account" VARCHAR(255) NOT NULL,
+  "source_customer" VARCHAR(255) NOT NULL,
+  "source_subscription" VARCHAR(255) NOT NULL,
+  "destination_account" VARCHAR(255) NOT NULL,
+  "destination_customer" VARCHAR(255) NOT NULL,
+  "destination_subscription" VARCHAR(255),
+  "destination_schedule" VARCHAR(255),
+  "stage" VARCHAR(32) NOT NULL CHECK ("stage" IN ('prepared','source_stopped','destination_staged','destination_active','rollback_verified','cancelled')),
+  "revision" INTEGER NOT NULL DEFAULT 0,
+  "paid_through" TIMESTAMPTZ NOT NULL,
+  "source_stopped_verified" BOOLEAN NOT NULL DEFAULT false,
+  "source_resumed_verified" BOOLEAN NOT NULL DEFAULT false,
+  "destination_disabled_verified" BOOLEAN NOT NULL DEFAULT false,
+  "destination_paid_invoice" VARCHAR(255),
+  "cancellation_requested" BOOLEAN NOT NULL DEFAULT false,
+  "recovery_required" BOOLEAN NOT NULL DEFAULT false,
+  "review_reason" TEXT,
+  "livemode" BOOLEAN NOT NULL,
+  "updated_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE ("source_account", "source_customer"),
+  UNIQUE ("destination_account", "destination_customer"),
+  CHECK ("source_account" <> "destination_account")
+);
+
+-- Base social tables must exist before the dependent publishing records.
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- Connected social accounts (one row per user/provider/external account).
+CREATE TABLE IF NOT EXISTS social_accounts (
+    id VARCHAR(36) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider VARCHAR(20) NOT NULL,
+    external_account_id VARCHAR(255) NOT NULL,
+    display_name VARCHAR(255),
+    username VARCHAR(255),
+    avatar_url TEXT,
+    access_token_encrypted TEXT NOT NULL,
+    refresh_token_encrypted TEXT,
+    token_expires_at TIMESTAMP WITH TIME ZONE,
+    scopes TEXT,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    status VARCHAR(20) NOT NULL DEFAULT 'active',
+    last_error TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    revoked_at TIMESTAMP WITH TIME ZONE
+);
+
+CREATE INDEX IF NOT EXISTS idx_social_accounts_user_id ON social_accounts(user_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_social_accounts_unique_account
+ON social_accounts(user_id, provider, external_account_id);
+
+-- Short-lived OAuth state records (CSRF protection + PKCE verifier storage).
+CREATE TABLE IF NOT EXISTS social_oauth_states (
+    state VARCHAR(128) PRIMARY KEY,
+    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    provider VARCHAR(20) NOT NULL,
+    code_verifier VARCHAR(255),
+    redirect_uri TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_social_oauth_states_expires_at
+ON social_oauth_states(expires_at);
+
+-- One row per publish attempt of a clip to a connected account.
+-- Clip attributes are snapshotted so the performance loop survives clip
+-- deletion and later re-edits.
+CREATE TABLE IF NOT EXISTS social_posts (
+    id VARCHAR(36) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    task_id VARCHAR(36) REFERENCES tasks(id) ON DELETE SET NULL,
+    -- generated_clips is created by the backend, so the clip foreign key is
+    -- added by the backend migration (Prisma may run before it exists).
+    clip_id VARCHAR(36),
+    social_account_id VARCHAR(36) REFERENCES social_accounts(id) ON DELETE SET NULL,
+    provider VARCHAR(20) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'queued',
+    scheduled_for TIMESTAMP WITH TIME ZONE,
+    title VARCHAR(255),
+    caption TEXT,
+    hashtags TEXT[] NOT NULL DEFAULT '{}',
+    privacy_level VARCHAR(40) NOT NULL DEFAULT 'public',
+    media_token VARCHAR(64) UNIQUE,
+    media_token_expires_at TIMESTAMP WITH TIME ZONE,
+    source_file_path TEXT,
+    pending_handle VARCHAR(255),
+    external_post_id VARCHAR(255),
+    external_url TEXT,
+    error_message TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    claimed_at TIMESTAMP WITH TIME ZONE,
+    hook_type VARCHAR(50),
+    hook_title VARCHAR(255),
+    virality_score INTEGER,
+    hook_score INTEGER,
+    engagement_score INTEGER,
+    value_score INTEGER,
+    shareability_score INTEGER,
+    clip_duration DOUBLE PRECISION,
+    published_at TIMESTAMP WITH TIME ZONE,
+    last_metrics_at TIMESTAMP WITH TIME ZONE,
+    metrics JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_social_posts_user_id ON social_posts(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_social_posts_clip_id ON social_posts(clip_id);
+
+CREATE INDEX IF NOT EXISTS idx_social_posts_task_id ON social_posts(task_id);
+
+CREATE INDEX IF NOT EXISTS idx_social_posts_status_scheduled
+ON social_posts(status, scheduled_for);
+
+-- Time series of engagement metrics pulled back from each platform.
+CREATE TABLE IF NOT EXISTS social_post_metrics (
+    id VARCHAR(36) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+    post_id VARCHAR(36) NOT NULL REFERENCES social_posts(id) ON DELETE CASCADE,
+    captured_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    views BIGINT,
+    likes BIGINT,
+    comments BIGINT,
+    shares BIGINT,
+    saves BIGINT,
+    raw JSONB
+);
+
+CREATE INDEX IF NOT EXISTS idx_social_post_metrics_post_id
+ON social_post_metrics(post_id, captured_at DESC);
+
+-- Re-runnable: Prisma's copy of this migration creates social_posts without
+-- the clip foreign key, so whichever runner goes first ends up with it.
+ALTER TABLE social_posts DROP CONSTRAINT IF EXISTS social_posts_clip_id_fkey;
+
+ALTER TABLE social_posts
+ADD CONSTRAINT social_posts_clip_id_fkey
+FOREIGN KEY (clip_id) REFERENCES generated_clips(id) ON DELETE SET NULL;
+
+-- Private resumable YouTube transfers (20261119_0001).
+CREATE TABLE IF NOT EXISTS youtube_uploads (
+    post_id VARCHAR(36) PRIMARY KEY REFERENCES social_posts(id) ON DELETE CASCADE,
+    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    media_sha256 TEXT NOT NULL,
+    size_bytes BIGINT NOT NULL CHECK (size_bytes > 0),
+    metadata_snapshot JSONB NOT NULL,
+    session_url_encrypted TEXT,
+    confirmed_bytes BIGINT NOT NULL DEFAULT 0 CHECK (confirmed_bytes >= 0),
+    bytes_started BOOLEAN NOT NULL DEFAULT FALSE,
+    video_id TEXT,
+    stage TEXT NOT NULL DEFAULT 'queued',
+    reason_code TEXT,
+    actual_visibility TEXT,
+    next_attempt_at TIMESTAMPTZ DEFAULT NOW(),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    lease_token TEXT,
+    lease_expires_at TIMESTAMPTZ,
+    processing_started_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (confirmed_bytes <= size_bytes)
+);
+CREATE INDEX IF NOT EXISTS youtube_uploads_due ON youtube_uploads(next_attempt_at)
+    WHERE stage NOT IN ('ready', 'needs_attention');
+
+-- Review-first publication policies and reservations.
+ALTER TABLE social_posts ADD COLUMN IF NOT EXISTS provider_options JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+CREATE TABLE IF NOT EXISTS social_publication_policies (
+    account_id VARCHAR(36) PRIMARY KEY REFERENCES social_accounts(id) ON DELETE CASCADE,
+    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    policy JSONB NOT NULL DEFAULT '{}'::jsonb,
+    enabled_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS social_review_items (
+    id VARCHAR(36) PRIMARY KEY,
+    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    account_id VARCHAR(36) NOT NULL REFERENCES social_accounts(id) ON DELETE CASCADE,
+    task_id VARCHAR(36) REFERENCES tasks(id) ON DELETE SET NULL,
+    clip_id VARCHAR(36) REFERENCES generated_clips(id) ON DELETE SET NULL,
+    source_key TEXT,
+    render_version TEXT NOT NULL,
+    source_file_path TEXT NOT NULL,
+    media_sha256 TEXT,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','cancelled')),
+    post_id VARCHAR(36) REFERENCES social_posts(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    decided_at TIMESTAMPTZ,
+    UNIQUE(user_id, account_id, clip_id)
+);
+CREATE INDEX IF NOT EXISTS social_review_pending ON social_review_items(user_id,account_id,status,created_at);
+
+CREATE TABLE IF NOT EXISTS social_publication_slots (
+    review_id VARCHAR(36) PRIMARY KEY REFERENCES social_review_items(id) ON DELETE CASCADE,
+    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    account_id VARCHAR(36) NOT NULL REFERENCES social_accounts(id) ON DELETE CASCADE,
+    publish_at TIMESTAMPTZ NOT NULL,
+    cancelled_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS social_publication_slot_time ON social_publication_slots(account_id,publish_at) WHERE cancelled_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS social_provider_limits (
+    provider TEXT NOT NULL,
+    project_key TEXT NOT NULL,
+    bucket TEXT NOT NULL,
+    retry_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY(provider,project_key,bucket)
+);
+ALTER TABLE youtube_uploads ADD COLUMN IF NOT EXISTS desired_publish_at TIMESTAMPTZ;
+ALTER TABLE youtube_uploads ADD COLUMN IF NOT EXISTS confirmed_publish_at TIMESTAMPTZ;
+ALTER TABLE youtube_uploads ADD COLUMN IF NOT EXISTS schedule_requested_at TIMESTAMPTZ;

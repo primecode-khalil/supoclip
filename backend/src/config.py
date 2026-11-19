@@ -65,15 +65,16 @@ class Config:
         )
         # Empty disables the residential-proxy yt-dlp path. Nothing in the
         # download chain changes until this template is set.
-        self.youtube_proxy_url = os.getenv("YOUTUBE_PROXY_URL", "").strip()
+        from .home_proxy import active_proxy
+        self.youtube_proxy_url = active_proxy() or self._get_runtime_setting("YOUTUBE_PROXY_URL") or ""
         self.youtube_proxy_timeout_seconds = self._get_int_env("YOUTUBE_PROXY_TIMEOUT_SECONDS", 300)
         # Twitch/Kick: YOUTUBE_PROXY_TIMEOUT_SECONDS is how long a download may go
         # without receiving data. This is the shortest overall cap for one call.
         # A long VOD is allowed longer, up to an hour, while data is still arriving.
         # Do not use the idle timeout as that cap.
         self.stream_download_max_seconds = self._get_int_env("STREAM_DOWNLOAD_MAX_SECONDS", 2400)
-        self.youtube_proxy_country = os.getenv("YOUTUBE_PROXY_COUNTRY", "").strip()
-        self.youtube_pot_provider_url = os.getenv("YOUTUBE_POT_PROVIDER_URL", "").strip()
+        self.youtube_proxy_country = self._get_runtime_setting("YOUTUBE_PROXY_COUNTRY") or ""
+        self.youtube_pot_provider_url = self._get_runtime_setting("YOUTUBE_POT_PROVIDER_URL") or ""
         self.youtube_download_max_bytes = self._get_int_env("YOUTUBE_DOWNLOAD_MAX_BYTES", 2_000_000_000)
         self.youtube_section_padding_seconds = self._get_float_env("YOUTUBE_SECTION_PADDING_SECONDS", 10.0)
         self.youtube_max_height = self._get_int_env("YOUTUBE_MAX_HEIGHT", 1080)
@@ -248,21 +249,21 @@ class Config:
 
         # Social publishing. Each provider needs an OAuth app registered by the
         # operator; users then connect their own accounts through that app.
-        self.youtube_oauth_client_id = self._get_optional_env(
+        self.youtube_oauth_client_id = self._get_runtime_setting(
             "YOUTUBE_OAUTH_CLIENT_ID"
         ) or self._get_optional_env("GOOGLE_OAUTH_CLIENT_ID")
-        self.youtube_oauth_client_secret = self._get_optional_env(
+        self.youtube_oauth_client_secret = self._get_runtime_setting(
             "YOUTUBE_OAUTH_CLIENT_SECRET"
         ) or self._get_optional_env("GOOGLE_OAUTH_CLIENT_SECRET")
-        self.tiktok_client_key = self._get_optional_env("TIKTOK_CLIENT_KEY")
-        self.tiktok_client_secret = self._get_optional_env("TIKTOK_CLIENT_SECRET")
+        self.tiktok_client_key = self._get_runtime_setting("TIKTOK_CLIENT_KEY")
+        self.tiktok_client_secret = self._get_runtime_setting("TIKTOK_CLIENT_SECRET")
         # Until TikTok audits the app, Direct Post only accepts SELF_ONLY posts
         # from accounts set to private. Set true only after the audit passes.
         self.tiktok_app_audited = self._get_bool_env("TIKTOK_APP_AUDITED", False)
-        self.instagram_app_id = self._get_optional_env(
+        self.instagram_app_id = self._get_runtime_setting(
             "INSTAGRAM_APP_ID"
         ) or self._get_optional_env("META_APP_ID")
-        self.instagram_app_secret = self._get_optional_env(
+        self.instagram_app_secret = self._get_runtime_setting(
             "INSTAGRAM_APP_SECRET"
         ) or self._get_optional_env("META_APP_SECRET")
         # OAuth callbacks and public media fetches (Instagram pulls the video
