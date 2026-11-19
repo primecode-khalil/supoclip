@@ -38,7 +38,7 @@ def validate_session_uri(uri: str) -> str:
     return uri
 
 
-def _error(response) -> None:
+def raise_youtube_error(response) -> None:
     code = response.status_code
     try:
         reasons = {item.get("reason") for item in response.json().get("error", {}).get("errors", []) if isinstance(item, dict)}
@@ -74,7 +74,7 @@ class YouTubeUploadProtocol:
             params={"uploadType": "resumable", "part": "snippet,status"}, json=metadata,
             headers={"Content-Type": "application/json; charset=UTF-8", "X-Upload-Content-Type": "video/mp4", "X-Upload-Content-Length": str(size_bytes)})
         if response.status_code not in (200, 201):
-            _error(response)
+            raise_youtube_error(response)
         return validate_session_uri(response.headers.get("Location") or "")
 
     def probe_upload(self, access_token: str, session_uri: str, size_bytes: int) -> UploadProgress:
@@ -114,4 +114,4 @@ class YouTubeUploadProtocol:
             if isinstance(video_id, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", video_id):
                 return UploadProgress(size_bytes, video_id)
             raise YouTubeUploadError("Upload accepted but its video ID could not be confirmed. Check YouTube before retrying.", "unknown_outcome", outcome_unknown=True)
-        _error(response)
+        raise_youtube_error(response)

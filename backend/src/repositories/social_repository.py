@@ -53,7 +53,11 @@ _POST_COLUMNS = """
     p.engagement_score, p.value_score, p.shareability_score, p.clip_duration,
     p.published_at, p.last_metrics_at, p.metrics, p.created_at, p.updated_at,
     a.display_name AS account_display_name, a.username AS account_username,
-    a.avatar_url AS account_avatar_url, a.status AS account_status
+    a.avatar_url AS account_avatar_url, a.status AS account_status,
+    (SELECT jsonb_build_object('stage',u.stage,'confirmed_bytes',u.confirmed_bytes,
+        'total_bytes',u.size_bytes,'next_attempt_at',u.next_attempt_at,
+        'reason_code',u.reason_code,'actual_visibility',u.actual_visibility)
+     FROM youtube_uploads u WHERE u.post_id=p.id) AS youtube_progress
 """
 
 _POST_UPDATABLE_COLUMNS = {
@@ -637,7 +641,7 @@ class SocialRepository:
 
     @staticmethod
     async def claim_post(
-        db: AsyncSession, post_id: str, *, media_token_expires_at: datetime
+        db: AsyncSession, post_id: str, *, media_token_expires_at: datetime, upload_handle: str | None = None
     ) -> Optional[Dict[str, Any]]:
         """
         Atomically move a ``queued`` post to ``publishing``.
@@ -656,6 +660,7 @@ class SocialRepository:
                     claimed_at = NOW(),
                     error_message = NULL,
                     media_token_expires_at = :media_token_expires_at,
+                    pending_handle = COALESCE(:upload_handle, pending_handle),
                     -- Publish the clip's current render, not the one that
                     -- existed when the post was created (edits replace it).
                     -- While publishing, media cleanup keeps this file.
@@ -671,7 +676,7 @@ class SocialRepository:
                 RETURNING id
                 """
             ),
-            {"id": post_id, "media_token_expires_at": media_token_expires_at},
+            {"id": post_id, "media_token_expires_at": media_token_expires_at, "upload_handle": upload_handle},
         )
         row = result.fetchone()
         await db.commit()
@@ -868,7 +873,7 @@ class SocialRepository:
                 FROM social_posts p
                 LEFT JOIN social_accounts a ON a.id = p.social_account_id
                 WHERE p.status = 'publishing'
-                  AND p.external_post_id IS NULL
+                  AND (p.external_post_id IS NULL OR p.provider = 'youtube')
                   AND p.pending_handle IS NOT NULL
                 ORDER BY p.updated_at ASC
                 LIMIT :limit
@@ -881,6 +886,7 @@ class SocialRepository:
     @staticmethod
     def serialize_post(row: Any) -> Dict[str, Any]:
         metrics = _json_value(row.metrics)
+        progress = _json_value(getattr(row, "youtube_progress", None)) or {}
         return {
             "id": row.id,
             "user_id": row.user_id,
@@ -889,6 +895,12 @@ class SocialRepository:
             "social_account_id": row.social_account_id,
             "provider": row.provider,
             "status": row.status,
+            "stage": progress.get("stage"),
+            "confirmed_bytes": progress.get("confirmed_bytes"),
+            "total_bytes": progress.get("total_bytes"),
+            "next_attempt_at": progress.get("next_attempt_at"),
+            "reason_code": progress.get("reason_code"),
+            "actual_visibility": progress.get("actual_visibility"),
             "scheduled_for": _iso(row.scheduled_for),
             "title": row.title,
             "caption": row.caption,

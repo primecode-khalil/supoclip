@@ -223,13 +223,14 @@ class SocialService:
                 **connection,
                 "refresh_access_available": bool(account.get("refresh_token_encrypted")),
                 "permissions_complete": set(SCOPES).issubset(scopes),
+                "private_test_completed": bool((account.get("metadata") or {}).get("youtube_private_test_completed_at")),
             })
         return {
             "configured": YouTubeProvider(self.config).is_configured,
             "redirect_uri": self.redirect_uri_for("youtube"),
             "connections": connections,
             "refresh_access_available": any(c["refresh_access_available"] and c["status"] == "active" for c in connections),
-            "private_test_completed": False,
+            "private_test_completed": any(c["private_test_completed"] for c in connections),
         }
 
     async def publishing_options(self, user_id: str, account_id: str) -> Dict[str, Any]:
@@ -655,6 +656,11 @@ class SocialService:
         if attempts is None:
             # A concurrent retry (double click) already queued it.
             raise SocialValidationError("This post is already being retried.")
+        if post["provider"] == "youtube":
+            from ..repositories.youtube_upload_repository import YouTubeUploadRepository
+            from ..social.youtube import YouTubeProvider
+            if isinstance(get_provider("youtube", self.config), YouTubeProvider):
+                await YouTubeUploadRepository.request_retry(self.db, post_id)
         await self._enqueue_or_fail(post_id, attempts)
         return await self.repo.get_post(self.db, post_id) or post
 
@@ -755,6 +761,12 @@ class SocialService:
         post = await self.repo.get_post(self.db, post_id)
         if not post:
             raise SocialNotFound(f"Post {post_id} not found")
+        if post["provider"] == "youtube":
+            from ..social.youtube import YouTubeProvider
+            from .youtube_publish_service import YouTubePublishService
+            provider = get_provider("youtube", self.config)
+            if isinstance(provider, YouTubeProvider):
+                return await YouTubePublishService(self, provider).advance(post_id)
         if post["status"] == "publishing" and post.get("pending_handle"):
             # The platform accepted the upload and processes it asynchronously.
             return await self.resolve_pending_post(post)
@@ -936,6 +948,12 @@ class SocialService:
 
     async def resolve_pending_post(self, post: Dict[str, Any]) -> Dict[str, Any]:
         """Poll a platform that publishes asynchronously (TikTok)."""
+        if post["provider"] == "youtube":
+            from ..social.youtube import YouTubeProvider
+            from .youtube_publish_service import YouTubePublishService
+            provider = get_provider("youtube", self.config)
+            if isinstance(provider, YouTubeProvider):
+                return await YouTubePublishService(self, provider).advance(post["id"])
         account_id = post.get("social_account_id")
         account = (
             await self.repo.get_account_with_tokens(self.db, account_id) if account_id else None

@@ -16,7 +16,7 @@ from urllib.parse import urlencode
 
 from ..config import Config, get_config
 from .youtube_metadata import build_youtube_metadata
-from .youtube_upload import YouTubeUploadProtocol
+from .youtube_upload import YouTubeUploadProtocol, YouTubeUploadError, raise_youtube_error
 from .base import (
     DEFAULT_HTTP_TIMEOUT,
     AccountProfile,
@@ -115,6 +115,8 @@ class YouTubeProvider(YouTubeUploadProtocol, SocialProvider):
             timeout=DEFAULT_HTTP_TIMEOUT,
         )
         if response.status_code >= 400:
+            if response.status_code == 429 or response.status_code >= 500:
+                raise SocialProviderError("Google token refresh is temporarily unavailable.", retryable=True)
             raise SocialProviderError(
                 f"YouTube token refresh failed: {self._extract_error(response)}",
                 reauth=True,
@@ -231,6 +233,17 @@ class YouTubeProvider(YouTubeUploadProtocol, SocialProvider):
             external_url=f"https://www.youtube.com/shorts/{video_id}",
             raw=payload,
         )
+
+    def fetch_video_status(self, access_token: str, video_id: str) -> dict[str, Any]:
+        response = self._upload_request("get", f"{API_BASE}/videos", access_token,
+            params={"part": "status,processingDetails,snippet", "id": video_id})
+        if response.status_code != 200:
+            raise_youtube_error(response)
+        try:
+            items = response.json().get("items") or []
+            return next((item for item in items if item.get("id") == video_id), {})
+        except (ValueError, AttributeError, TypeError):
+            raise YouTubeUploadError("YouTube's processing status is temporarily unavailable.", "temporary", retryable=True) from None
 
     # -- analytics ------------------------------------------------------
     def fetch_metrics(

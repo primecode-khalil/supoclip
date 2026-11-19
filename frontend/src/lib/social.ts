@@ -57,6 +57,12 @@ export interface SocialPost {
   social_account_id: string | null;
   provider: SocialProviderId;
   status: SocialPostStatus;
+  stage?: "queued" | "waiting_for_slot" | "uploading" | "processing" | "ready" | "waiting_for_quota" | "reconnect_required" | "needs_attention" | null;
+  confirmed_bytes?: number | null;
+  total_bytes?: number | null;
+  next_attempt_at?: string | null;
+  reason_code?: string | null;
+  actual_visibility?: SocialPrivacyLevel | null;
   scheduled_for: string | null;
   title: string | null;
   caption: string | null;

@@ -51,3 +51,43 @@ class YouTubeUploadRepository:
         """), {**fields, "id": post_id, "token": token})
         await db.commit()
         return result.rowcount == 1
+
+    @staticmethod
+    async def request_retry(db, post_id: str) -> None:
+        await db.execute(text("""
+            UPDATE youtube_uploads SET next_attempt_at=NOW(), reason_code=NULL,
+                stage=CASE WHEN video_id IS NULL THEN 'uploading' ELSE 'processing' END,
+                processing_started_at=CASE WHEN video_id IS NOT NULL THEN NOW() ELSE processing_started_at END
+            WHERE post_id=:id AND (lease_expires_at IS NULL OR lease_expires_at < NOW())
+        """), {"id": post_id})
+        await db.commit()
+
+    @staticmethod
+    async def finish(db, post_id: str, token: str, account_id: str, visibility: str) -> bool:
+        """Commit processing proof, publication and private-test receipt together."""
+        row = (await db.execute(text("""
+            UPDATE youtube_uploads SET stage='ready',actual_visibility=:privacy,
+                lease_token=NULL,lease_expires_at=NULL,next_attempt_at=NULL,reason_code=NULL,updated_at=NOW()
+            WHERE post_id=:id AND lease_token=:token AND lease_expires_at > NOW() AND video_id IS NOT NULL
+            RETURNING video_id,user_id
+        """), {"id": post_id, "token": token, "privacy": visibility})).mappings().first()
+        if row is None:
+            await db.rollback()
+            return False
+        result = await db.execute(text("""
+            UPDATE social_posts SET status='published',external_post_id=:video,
+                external_url=:url,pending_handle=NULL,error_message=NULL,published_at=NOW(),
+                media_token_expires_at=NOW()+INTERVAL '1 hour',updated_at=NOW()
+            WHERE id=:id AND status='publishing'
+        """), {"id": post_id, "video": row["video_id"], "url": f"https://www.youtube.com/shorts/{row['video_id']}"})
+        if result.rowcount != 1:
+            await db.rollback()
+            return False
+        if visibility == "private":
+            await db.execute(text("""
+                UPDATE social_accounts SET metadata=COALESCE(metadata,'{}'::jsonb) ||
+                    jsonb_build_object('youtube_private_test_completed_at',NOW())
+                WHERE id=:account AND user_id=:user AND revoked_at IS NULL
+            """), {"account": account_id, "user": row["user_id"]})
+        await db.commit()
+        return True
