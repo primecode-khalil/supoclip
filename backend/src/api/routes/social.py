@@ -111,6 +111,12 @@ async def list_connections(request: Request, db: AsyncSession = Depends(get_db))
     return {"connections": connections, "total": len(connections)}
 
 
+@router.get("/youtube/setup")
+async def youtube_setup(request: Request, db: AsyncSession = Depends(get_db)):
+    user_id = await _allowed_user_id(request, db, session_only=True)
+    return await _service(request, db).youtube_setup(user_id)
+
+
 @router.get("/connections/{account_id}/publishing-options")
 async def publishing_options(account_id: str, request: Request, db: AsyncSession = Depends(get_db)):
     user_id = await _allowed_user_id(request, db)

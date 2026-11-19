@@ -2,6 +2,14 @@ export type SocialProviderId = "youtube" | "tiktok" | "instagram";
 
 export type SocialPrivacyLevel = "public" | "unlisted" | "private";
 
+export interface YouTubeSetupStatus {
+  configured: boolean;
+  redirect_uri: string;
+  connections: (SocialConnection & { refresh_access_available: boolean; permissions_complete: boolean })[];
+  refresh_access_available: boolean;
+  private_test_completed: boolean;
+}
+
 export type SocialPostStatus =
   | "scheduled"
   | "queued"

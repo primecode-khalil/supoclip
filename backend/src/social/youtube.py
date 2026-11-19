@@ -15,6 +15,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import urlencode
 
 from ..config import Config, get_config
+from .youtube_metadata import build_youtube_metadata
 from .base import (
     DEFAULT_HTTP_TIMEOUT,
     AccountProfile,
@@ -186,27 +187,8 @@ class YouTubeProvider(SocialProvider):
 
     # -- publishing -----------------------------------------------------
     def publish(self, access_token: str, request: PublishRequest) -> PublishResult:
-        privacy = PRIVACY_MAP.get(request.privacy_level, "private")
-        title = (request.title or "").strip()[:TITLE_MAX_LENGTH] or "Untitled clip"
-        hashtags = list(request.hashtags)
-        if not any(tag.lower().lstrip("#") == "shorts" for tag in hashtags):
-            hashtags.append("Shorts")
-        description = build_caption(request.caption, hashtags, DESCRIPTION_MAX_LENGTH)
-        tags = [tag.lstrip("#") for tag in hashtags if tag.strip("# ")][:30]
-
+        metadata = build_youtube_metadata(request)
         file_size = os.path.getsize(request.file_path)
-        metadata = {
-            "snippet": {
-                "title": title,
-                "description": description,
-                "tags": tags,
-                "categoryId": "22",
-            },
-            "status": {
-                "privacyStatus": privacy,
-                "selfDeclaredMadeForKids": False,
-            },
-        }
         init_response = self.http.post(
             UPLOAD_URL,
             params={"uploadType": "resumable", "part": "snippet,status"},

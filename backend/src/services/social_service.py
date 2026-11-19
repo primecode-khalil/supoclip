@@ -146,6 +146,8 @@ class SocialService:
 
     async def can_schedule(self, user_id: str) -> bool:
         """Plan entitlement, plus admin testing during the restricted rollout."""
+        if self.config.self_host and not self.config.monetization_enabled:
+            return True
         if self.config.social_publishing_access == "admins":
             row = (
                 await self.db.execute(
@@ -205,6 +207,30 @@ class SocialService:
 
     async def list_connections(self, user_id: str) -> List[Dict[str, Any]]:
         return await self.repo.list_accounts(self.db, user_id)
+
+    async def youtube_setup(self, user_id: str) -> Dict[str, Any]:
+        from ..social.youtube import SCOPES, YouTubeProvider
+
+        connections = []
+        for connection in await self.list_connections(user_id):
+            if connection["provider"] != "youtube":
+                continue
+            account = await self.repo.get_account_with_tokens(self.db, connection["id"])
+            if not account or account.get("user_id") != user_id or account.get("revoked_at"):
+                continue
+            scopes = set((account.get("scopes") or "").split())
+            connections.append({
+                **connection,
+                "refresh_access_available": bool(account.get("refresh_token_encrypted")),
+                "permissions_complete": set(SCOPES).issubset(scopes),
+            })
+        return {
+            "configured": YouTubeProvider(self.config).is_configured,
+            "redirect_uri": self.redirect_uri_for("youtube"),
+            "connections": connections,
+            "refresh_access_available": any(c["refresh_access_available"] and c["status"] == "active" for c in connections),
+            "private_test_completed": False,
+        }
 
     async def publishing_options(self, user_id: str, account_id: str) -> Dict[str, Any]:
         """Current account-specific choices; never expose credentials to the client."""

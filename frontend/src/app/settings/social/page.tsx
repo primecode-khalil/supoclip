@@ -18,6 +18,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { YouTubeSetup } from "@/components/youtube-setup";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ScheduledPosts } from "@/components/scheduled-posts";
 import { SocialProviderIcon } from "@/components/social-provider-icon";
@@ -193,6 +194,7 @@ function SocialSettingsContent() {
       )}
 
       {/* Connect */}
+      <YouTubeSetup key={connections.map(c => `${c.id}:${c.status}`).join(",")} />
       <section className="mb-10">
         <h2 className={SECTION_HEADING}>{t("page.connectHeading")}</h2>
         {!isFetching && providers.some((provider) => provider.paused) && (

@@ -103,6 +103,7 @@ class PublishRequest:
     # pulls the video instead of accepting an upload.
     public_media_url: Optional[str] = None
     account_metadata: Dict[str, Any] = field(default_factory=dict)
+    provider_options: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
