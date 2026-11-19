@@ -49,7 +49,7 @@ _POST_COLUMNS = """
     p.media_token, p.media_token_expires_at, p.source_file_path,
     p.pending_handle, p.external_post_id, p.external_url, p.error_message, p.attempts,
     p.claimed_at,
-    p.hook_type, p.hook_title, p.virality_score, p.hook_score,
+    p.provider_options, p.hook_type, p.hook_title, p.virality_score, p.hook_score,
     p.engagement_score, p.value_score, p.shareability_score, p.clip_duration,
     p.published_at, p.last_metrics_at, p.metrics, p.created_at, p.updated_at,
     a.display_name AS account_display_name, a.username AS account_username,
@@ -460,6 +460,8 @@ class SocialRepository:
         clip_snapshot: Dict[str, Any],
         request_key: Optional[str] = None,
         request_hash: Optional[str] = None,
+        provider_options: Optional[Dict[str, Any]] = None,
+        commit: bool = True,
     ) -> Dict[str, Any]:
         post_id = str(uuid4())
         await db.execute(
@@ -470,14 +472,14 @@ class SocialRepository:
                     scheduled_for, title, caption, hashtags, privacy_level, media_token,
                     source_file_path, hook_type, hook_title, virality_score, hook_score,
                     engagement_score, value_score, shareability_score, clip_duration,
-                    created_at, updated_at
+                    provider_options, created_at, updated_at
                 )
                 VALUES (
                     :id, :user_id, :task_id, :clip_id, :social_account_id, :provider, :status,
                     :scheduled_for, :title, :caption, :hashtags, :privacy_level, :media_token,
                     :source_file_path, :hook_type, :hook_title, :virality_score, :hook_score,
                     :engagement_score, :value_score, :shareability_score, :clip_duration,
-                    NOW(), NOW()
+                    CAST(:provider_options AS JSONB), NOW(), NOW()
                 )
                 """
             ),
@@ -504,6 +506,7 @@ class SocialRepository:
                 "value_score": clip_snapshot.get("value_score"),
                 "shareability_score": clip_snapshot.get("shareability_score"),
                 "clip_duration": clip_snapshot.get("duration"),
+                "provider_options": json.dumps(provider_options or {}),
             },
         )
         if request_key:
@@ -511,7 +514,8 @@ class SocialRepository:
                 INSERT INTO social_post_requests(user_id,request_key,request_hash,post_id)
                 VALUES (:user,:key,:hash,:post)
             """), {"user": user_id, "key": request_key, "hash": request_hash, "post": post_id})
-        await db.commit()
+        if commit:
+            await db.commit()
         post = await SocialRepository.get_post(db, post_id)
         assert post is not None
         return post
@@ -665,7 +669,7 @@ class SocialRepository:
                     -- existed when the post was created (edits replace it).
                     -- While publishing, media cleanup keeps this file.
                     source_file_path = CASE
-                        WHEN pending_handle IS NULL THEN (
+                        WHEN pending_handle IS NULL AND NOT (provider_options ? 'review') THEN (
                             SELECT c.file_path FROM generated_clips c
                             WHERE c.id = social_posts.clip_id
                         )
@@ -895,6 +899,7 @@ class SocialRepository:
             "social_account_id": row.social_account_id,
             "provider": row.provider,
             "status": row.status,
+            "provider_options": _json_value(getattr(row, "provider_options", None)) or {},
             "stage": progress.get("stage"),
             "confirmed_bytes": progress.get("confirmed_bytes"),
             "total_bytes": progress.get("total_bytes"),

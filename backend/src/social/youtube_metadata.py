@@ -39,6 +39,9 @@ def build_youtube_metadata(request: PublishRequest) -> dict:
         "privacyStatus": request.privacy_level if request.privacy_level in ("private", "public", "unlisted") else "private",
         "selfDeclaredMadeForKids": audience,
     }
+    if options.get("native_schedule") is True:
+        # Scheduling is a separate, verified step after private processing.
+        status["privacyStatus"] = "private"
     if disclosure is not None:
         status["containsSyntheticMedia"] = disclosure
     return {

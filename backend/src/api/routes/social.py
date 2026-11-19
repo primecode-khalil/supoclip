@@ -28,6 +28,9 @@ from ...media_storage import is_s3
 from ...services.social_service import SocialError, SocialService
 from ...repositories.social_repository import SocialRepository
 from ...source_identity import source_admission_lock
+from ...services.social_publication_policy import PublishingPolicy, SocialPublicationPolicyService
+from ...services.social_review_service import SocialReviewService, ReviewImport, ReviewCandidate, ReviewApproval
+from typing import Literal
 from ...utils.async_helpers import run_in_thread
 
 logger = logging.getLogger(__name__)
@@ -115,6 +118,79 @@ async def list_connections(request: Request, db: AsyncSession = Depends(get_db))
 async def youtube_setup(request: Request, db: AsyncSession = Depends(get_db)):
     user_id = await _allowed_user_id(request, db, session_only=True)
     return await _service(request, db).youtube_setup(user_id)
+
+
+@router.get("/accounts/{account_id}/automation")
+async def get_publication_policy(account_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    user_id = await _allowed_user_id(request, db)
+    try:
+        return await SocialPublicationPolicyService(db).get(user_id, account_id)
+    except SocialError as exc:
+        raise _http_error(exc)
+
+
+@router.put("/accounts/{account_id}/automation")
+async def save_publication_policy(account_id: str, body: PublishingPolicy, request: Request, db: AsyncSession = Depends(get_db)):
+    user_id = await _allowed_user_id(request, db, session_only=True)
+    try:
+        return await SocialPublicationPolicyService(db).save(user_id, account_id, body.model_dump(mode="json", exclude_unset=True))
+    except SocialError as exc:
+        raise _http_error(exc)
+
+
+@router.get("/review")
+async def list_review(request: Request, account_id: str, status: Literal["pending", "approved", "rejected", "cancelled"] = "pending",
+                      limit: int = 50, db: AsyncSession = Depends(get_db)):
+    user_id = await _allowed_user_id(request, db)
+    try:
+        return await SocialReviewService(_service(request, db)).list(user_id, account_id, status, max(1, min(200, limit)))
+    except SocialError as exc:
+        raise _http_error(exc)
+
+
+@router.post("/review/import")
+async def import_review(body: ReviewImport, request: Request, db: AsyncSession = Depends(get_db)):
+    user_id = await _allowed_user_id(request, db, session_only=True)
+    try:
+        return await SocialReviewService(_service(request, db)).import_clips(user_id, body)
+    except SocialError as exc:
+        raise _http_error(exc)
+
+
+@router.post("/review/candidates")
+async def add_review_candidate(body: ReviewCandidate, request: Request, db: AsyncSession = Depends(get_db)):
+    user_id = await _allowed_user_id(request, db)
+    try:
+        return await SocialReviewService(_service(request, db)).candidate(user_id, body.account_id, body.task_id, body.clip_id)
+    except SocialError as exc:
+        raise _http_error(exc)
+
+
+@router.post("/review/{identity}/approve")
+async def approve_review(identity: str, body: ReviewApproval, request: Request, db: AsyncSession = Depends(get_db)):
+    user_id = await _allowed_user_id(request, db, session_only=True)
+    try:
+        return await SocialReviewService(_service(request, db)).approve(user_id, identity, body)
+    except SocialError as exc:
+        raise _http_error(exc)
+
+
+@router.post("/review/{identity}/reject")
+async def reject_review(identity: str, request: Request, db: AsyncSession = Depends(get_db)):
+    user_id = await _allowed_user_id(request, db, session_only=True)
+    try:
+        return await SocialReviewService(_service(request, db)).decide(user_id, identity)
+    except SocialError as exc:
+        raise _http_error(exc)
+
+
+@router.post("/review/{identity}/undo")
+async def undo_review(identity: str, request: Request, db: AsyncSession = Depends(get_db)):
+    user_id = await _allowed_user_id(request, db, session_only=True)
+    try:
+        return await SocialReviewService(_service(request, db)).decide(user_id, identity, undo=True)
+    except SocialError as exc:
+        raise _http_error(exc)
 
 
 @router.get("/connections/{account_id}/publishing-options")

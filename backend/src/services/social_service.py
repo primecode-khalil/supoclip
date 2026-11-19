@@ -323,6 +323,11 @@ class SocialService:
         except SocialProviderError as exc:
             raise SocialValidationError(str(exc)) from exc
 
+        from ..social.youtube import YouTubeProvider
+        new_youtube = isinstance(provider, YouTubeProvider) and not any(
+            row["provider"] == "youtube" and row["external_account_id"] == profile.external_account_id
+            for row in await self.repo.list_accounts(self.db, user_id, include_revoked=True)
+        )
         account = await self.repo.upsert_account(
             self.db,
             user_id=user_id,
@@ -339,6 +344,9 @@ class SocialService:
             scopes=tokens.scopes,
             metadata=profile.metadata,
         )
+        if new_youtube:
+            from .social_publication_policy import SocialPublicationPolicyService
+            await SocialPublicationPolicyService(self.db).save(user_id, account["id"], {})
         logger.info(
             "Connected %s account %s for user %s", provider.name, account["id"], user_id
         )
@@ -485,6 +493,9 @@ class SocialService:
         scheduled_for: Optional[str],
         request_key: Optional[str] = None,
         request_hash: Optional[str] = None,
+        provider_options: Optional[Dict[str, Any]] = None,
+        transactional: bool = False,
+        verified_media: bool = False,
     ) -> Dict[str, Any]:
         task = await self.task_repo.get_task_by_id(self.db, task_id)
         if not task or task.get("user_id") != user_id:
@@ -494,7 +505,7 @@ class SocialService:
             raise SocialNotFound("Clip not found")
         clip_file = clip.get("file_path") or ""
         try:
-            clip_exists = await self._media_exists(clip_file)
+            clip_exists = verified_media or await self._media_exists(clip_file)
         except STORAGE_ERRORS as exc:
             raise SocialProviderUnavailable(
                 "Clip storage is temporarily unavailable. Try again shortly."
@@ -539,7 +550,8 @@ class SocialService:
 
         when = _parse_schedule(scheduled_for)
         now = datetime.now(timezone.utc)
-        status = "scheduled" if when and when > now + timedelta(seconds=30) else "queued"
+        native_schedule = provider.name == "youtube" and (provider_options or {}).get("native_schedule") is True
+        status = "scheduled" if when and when > now + timedelta(seconds=30) and not native_schedule else "queued"
         if status == "scheduled" and not await self.can_schedule(user_id):
             raise SocialPlanRequired(
                 "Scheduling posts is available on the Creator plan. "
@@ -554,7 +566,7 @@ class SocialService:
             social_account_id=account["id"],
             provider=provider.name,
             status=status,
-            scheduled_for=when if status == "scheduled" else None,
+            scheduled_for=when if status == "scheduled" or native_schedule else None,
             title=clean_title,
             caption=clean_caption,
             hashtags=clean_hashtags,
@@ -563,8 +575,10 @@ class SocialService:
             source_file_path=clip_file,
             clip_snapshot=clip,
             **({"request_key": request_key, "request_hash": request_hash} if request_key else {}),
+            **({"provider_options": provider_options} if provider_options else {}),
+            **({"commit": False} if transactional else {}),
         )
-        if status == "queued":
+        if status == "queued" and not transactional:
             await self._enqueue_or_fail(post["id"], int(post.get("attempts") or 0))
             post = await self.repo.get_post(self.db, post["id"]) or post
         logger.info(

@@ -42,6 +42,12 @@ def test_metadata_fallback_and_title_are_safe(tmp_path):
     assert metadata(tmp_path, title="  ")["snippet"]["title"] == "Untitled clip"
 
 
+def test_native_schedule_upload_is_private_until_processing_is_verified(tmp_path):
+    result = metadata(tmp_path, privacy="public", options={"native_schedule": True})
+    assert result["status"]["privacyStatus"] == "private"
+    assert "publishAt" not in result["status"]
+
+
 def test_tag_budget_accounts_for_spaces_and_separators(tmp_path):
     result = metadata(tmp_path, tags=["a long tag " + "x" * 100 + str(n) for n in range(30)])
     tags = result["snippet"]["tags"]

@@ -12,6 +12,9 @@ from sqlalchemy import text
 
 from ..database import AsyncSessionLocal
 from ..source_identity import source_admission_lock
+from ..repositories.social_repository import SocialRepository
+from ..repositories.social_publication_policy_repository import SocialPublicationPolicyRepository
+from ..services.social_service import SocialService
 from .automation_schema import AutomationPolicy
 from .automation_store import AutomationStore, LostLeaseError
 from .capture import _terminate
@@ -98,8 +101,13 @@ class AutomationPipeline:
                 existing = (await db.execute(text("""
                     SELECT post_id FROM social_post_requests WHERE user_id=:user AND request_key=:key
                 """), {"user": channel.user_id, "key": key})).scalar_one_or_none()
+                destination_rule = await SocialPublicationPolicyRepository.get(db, channel.user_id, account_id) if provider == "youtube" else None
                 if existing:
+                    if destination_rule:
+                        details.setdefault("native_post_ids", []).append(existing)
                     return existing
+                if destination_rule and (not destination_rule["policy"].get("enabled", True) or not await SocialService(db).has_access(channel.user_id)):
+                    return None
                 others = (await db.execute(text("""
                     SELECT metadata FROM recording_windows WHERE channel_id=:channel
                     AND session_id=:session AND epoch=:epoch AND id<>:window
@@ -113,7 +121,7 @@ class AutomationPipeline:
                       AND created_at >= date_trunc('day', clock_timestamp() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
                       AND status <> 'cancelled'
                 """), {"user": channel.user_id})).scalar_one()
-                if count >= policy.max_posts_per_day:
+                if not destination_rule and count >= policy.max_posts_per_day:
                     raise PublicationLimitReached("Daily publication limit reached; remaining clips stay in the library")
                 await db.commit()
                 await self._live(token)
@@ -122,6 +130,20 @@ class AutomationPipeline:
                 if reservation not in reserved:
                     reserved.append(reservation)
                     await self._update(token, window, details=details)
+                if destination_rule:
+                    response = await self.native.request(channel.user_id, "POST", "/social/review/candidates", json={
+                        "task_id": window.task_id, "clip_id": clip["id"], "account_id": account_id,
+                    })
+                    item = response.get("item")
+                    if item:
+                        reviews = details.setdefault("review_ids", [])
+                        if item["id"] not in reviews:
+                            reviews.append(item["id"])
+                    post = response.get("post")
+                    if post and post["id"] not in details.setdefault("native_post_ids", []):
+                        details["native_post_ids"].append(post["id"])
+                    await self._update(token, window, details=details)
+                    return post["id"] if post else None
                 response = await self.native.request(channel.user_id, "POST", "/social/posts", key=key, json={
                     "task_id": window.task_id, "clip_id": clip["id"], "social_account_id": account_id,
                     "privacy_level": policy.publish_privacy,
@@ -213,11 +235,15 @@ class AutomationPipeline:
         for post_id in post_ids:
             await self.native.request(channel.user_id, "GET", f"/social/posts/{post_id}")
         if accounts and clips and not details.get("publication_capped"):
-            connections = await self.native.request(channel.user_id, "GET", "/social/connections")
-            providers = {account["id"]: account["provider"] for account in connections.get("connections", []) if account.get("status") == "active"}
+            async with AsyncSessionLocal() as db:
+                connections = await SocialRepository.list_accounts(db, channel.user_id)
+            providers = {account["id"]: account["provider"] for account in connections}
             for account_id in accounts:
                 provider = providers.get(account_id)
                 if provider not in {"youtube", "instagram"}:
+                    async with AsyncSessionLocal() as db:
+                        if await SocialPublicationPolicyRepository.get(db, channel.user_id, account_id):
+                            continue  # A disconnected destination must not stop capture.
                     raise PipelineBlocked("Autonomous publication supports connected YouTube and Instagram accounts; review other destinations in Social settings")
                 for clip in clips:
                     post_id = await self._post(channel, token, window, clip, account_id, provider, policy, details)
@@ -227,6 +253,8 @@ class AutomationPipeline:
                         await self._update(token, window, details=details)
         published = True
         for post_id in post_ids:
+            if post_id in details.get("native_post_ids", []):
+                continue  # The durable publisher owns this work; recording can retire.
             result = await self.native.request(channel.user_id, "GET", f"/social/posts/{post_id}")
             post = result["post"]
             if post["status"] in {"failed", "cancelled"}:
