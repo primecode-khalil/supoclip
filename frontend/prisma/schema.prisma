@@ -114,6 +114,7 @@ model User {
   social_accounts     SocialAccount[]
   social_oauth_states SocialOauthState[]
   social_posts        SocialPost[]
+  youtube_uploads     YouTubeUpload[]
 
   @@map("users")
   feature_tours UserFeatureTour[]
@@ -362,6 +363,7 @@ model SocialPost {
   social_account SocialAccount?     @relation(fields: [social_account_id], references: [id], onDelete: SetNull)
   metric_history SocialPostMetric[]
   request_receipts SocialPostRequest[]
+  youtube_upload YouTubeUpload?
 
   @@index([user_id], map: "idx_social_posts_user_id")
   @@index([clip_id], map: "idx_social_posts_clip_id")
@@ -614,4 +616,30 @@ model SocialPostRequest {
   post SocialPost? @relation(fields: [post_id], references: [id], onDelete: SetNull)
   @@id([user_id, request_key])
   @@map("social_post_requests")
+}
+
+// Private transfer checkpoints; never return session_url_encrypted to a client.
+model YouTubeUpload {
+  post_id String @id @db.VarChar(36)
+  user_id String @db.VarChar(36)
+  media_sha256 String
+  size_bytes BigInt
+  metadata_snapshot Json @db.JsonB
+  session_url_encrypted String?
+  confirmed_bytes BigInt @default(0)
+  bytes_started Boolean @default(false)
+  video_id String?
+  stage String @default("queued")
+  reason_code String?
+  actual_visibility String?
+  next_attempt_at DateTime? @default(now()) @db.Timestamptz
+  attempts Int @default(0)
+  lease_token String?
+  lease_expires_at DateTime? @db.Timestamptz
+  processing_started_at DateTime? @db.Timestamptz
+  created_at DateTime @default(now()) @db.Timestamptz
+  updated_at DateTime @default(now()) @db.Timestamptz
+  post SocialPost @relation(fields: [post_id], references: [id], onDelete: Cascade)
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  @@map("youtube_uploads")
 }

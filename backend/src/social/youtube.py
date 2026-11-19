@@ -16,6 +16,7 @@ from urllib.parse import urlencode
 
 from ..config import Config, get_config
 from .youtube_metadata import build_youtube_metadata
+from .youtube_upload import YouTubeUploadProtocol
 from .base import (
     DEFAULT_HTTP_TIMEOUT,
     AccountProfile,
@@ -52,7 +53,7 @@ TITLE_MAX_LENGTH = 100
 DESCRIPTION_MAX_LENGTH = 5000
 
 
-class YouTubeProvider(SocialProvider):
+class YouTubeProvider(YouTubeUploadProtocol, SocialProvider):
     name = "youtube"
     display_name = "YouTube Shorts"
 
