@@ -32,6 +32,8 @@ from .youtube_proxy import (
     extract_video_info,
     YouTubeDownloadError,
     YouTubeGeoRestrictedError,
+    YouTubeAccessBlockedError,
+    is_access_blocked_error,
     is_geo_restricted_error,
     log_youtube_attempt,
     proxy_configured,
@@ -470,6 +472,7 @@ def get_youtube_video_info(
     providers = [primary_provider, secondary_provider]
     last_error: Optional[Exception] = None
     geo_error: Optional[Exception] = None
+    access_error: Optional[Exception] = None
     # A result without a usable length. The other provider gets one try
     # (same deadline) before this is returned and the caller fails closed.
     incomplete: Optional[Dict[str, Any]] = None
@@ -523,12 +526,14 @@ def get_youtube_video_info(
             last_error = exc
             if is_geo_restricted_error(exc):
                 geo_error = exc
+            if is_access_blocked_error(exc):
+                access_error = exc
             if index == 0:
                 logger.warning(
                     "Primary YouTube metadata provider %s failed for %s: %s. Trying %s.",
                     provider,
                     video_id,
-                    exc,
+                    public_download_error(exc),
                     secondary_provider,
                 )
             else:
@@ -536,19 +541,21 @@ def get_youtube_video_info(
                     "Fallback YouTube metadata provider %s failed for %s: %s",
                     provider,
                     video_id,
-                    exc,
+                    public_download_error(exc),
                 )
 
-    if incomplete is not None and geo_error is None:
+    if incomplete is not None and geo_error is None and access_error is None:
         return incomplete
     if last_error:
-        logger.warning("YouTube video info fetch failed for %s: %s", video_id, last_error)
+        logger.warning("YouTube video info fetch failed for %s: %s", video_id, public_download_error(last_error))
         if errors is not None:
             errors.append(public_download_error(last_error))
     if deadline is not None and time.monotonic() >= deadline:
         raise TimeoutError("YouTube metadata deadline exceeded") from last_error
     if geo_error is not None:
         raise YouTubeGeoRestrictedError() from geo_error
+    if access_error is not None:
+        raise YouTubeAccessBlockedError() from access_error
     return None
 
 

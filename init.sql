@@ -390,3 +390,127 @@ CREATE TRIGGER update_app_settings_updated_at BEFORE UPDATE ON app_settings FOR 
 CREATE TRIGGER update_session_updatedAt BEFORE UPDATE ON session FOR EACH ROW EXECUTE FUNCTION update_updatedAt_column();
 CREATE TRIGGER update_account_updatedAt BEFORE UPDATE ON account FOR EACH ROW EXECUTE FUNCTION update_updatedAt_column();
 CREATE TRIGGER update_verification_updatedAt BEFORE UPDATE ON verification FOR EACH ROW EXECUTE FUNCTION update_updatedAt_column();
+
+-- Recording bookkeeping only. No capture process or media paths are registered here.
+CREATE TABLE IF NOT EXISTS recording_channels (
+    id VARCHAR(36) PRIMARY KEY,
+    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    platform VARCHAR(20) NOT NULL,
+    handle VARCHAR(255) NOT NULL,
+    url VARCHAR(500) NOT NULL,
+    name VARCHAR(120) NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    quality VARCHAR(255) NOT NULL DEFAULT 'best',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT ck_recording_channel_platform CHECK (platform IN ('twitch', 'kick', 'youtube'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_recording_channel_identity ON recording_channels (user_id, platform, handle);
+
+CREATE TABLE IF NOT EXISTS recording_sessions (
+    id VARCHAR(36) PRIMARY KEY,
+    channel_id VARCHAR(36) NOT NULL REFERENCES recording_channels(id) ON DELETE CASCADE,
+    external_id VARCHAR(255) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'created',
+    settings_snapshot JSONB NOT NULL,
+    started_at TIMESTAMPTZ,
+    ended_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT ck_recording_session_status CHECK (status IN ('created', 'recording', 'interrupted', 'completed', 'failed', 'cancelled')),
+    CONSTRAINT ck_recording_session_terminal_time CHECK ((status IN ('completed', 'failed', 'cancelled')) = (ended_at IS NOT NULL)),
+    CONSTRAINT ck_recording_session_started_time CHECK (status NOT IN ('recording', 'interrupted', 'completed') OR started_at IS NOT NULL),
+    CONSTRAINT ck_recording_session_created_time CHECK (status <> 'created' OR started_at IS NULL),
+    CONSTRAINT ck_recording_session_started_order CHECK (started_at IS NULL OR started_at >= created_at),
+    CONSTRAINT ck_recording_session_ended_order CHECK (ended_at IS NULL OR ended_at >= COALESCE(started_at, created_at))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_recording_session_external_id ON recording_sessions (channel_id, external_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_recording_session_active ON recording_sessions (channel_id) WHERE status IN ('created', 'recording', 'interrupted');
+CREATE INDEX IF NOT EXISTS ix_recording_sessions_channel_created ON recording_sessions (channel_id, created_at, id);
+
+
+-- Fork extension: 20261116_0002_recording_automation.sql
+-- Policy is opt-in. Leases persist fencing generations across process restarts.
+CREATE TABLE IF NOT EXISTS recording_automation (
+    channel_id VARCHAR(36) PRIMARY KEY REFERENCES recording_channels(id) ON DELETE CASCADE,
+    policy JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS recording_automation_leases (
+    channel_id VARCHAR(36) PRIMARY KEY REFERENCES recording_channels(id) ON DELETE CASCADE,
+    holder VARCHAR(255) NOT NULL,
+    fence BIGINT NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    last_heartbeat_at TIMESTAMPTZ NOT NULL,
+    last_error TEXT,
+    CONSTRAINT ck_recording_lease_fence CHECK (fence > 0)
+);
+CREATE TABLE IF NOT EXISTS recording_windows (
+    id VARCHAR(36) PRIMARY KEY,
+    channel_id VARCHAR(36) NOT NULL REFERENCES recording_channels(id) ON DELETE CASCADE,
+    session_id VARCHAR(36) NOT NULL REFERENCES recording_sessions(id) ON DELETE CASCADE,
+    epoch VARCHAR(80) NOT NULL,
+    sequence INTEGER NOT NULL,
+    source_path VARCHAR(1024) NOT NULL,
+    sha256 VARCHAR(64) NOT NULL,
+    size_bytes BIGINT NOT NULL,
+    start_seconds DOUBLE PRECISION NOT NULL,
+    end_seconds DOUBLE PRECISION NOT NULL,
+    overlap_seconds DOUBLE PRECISION NOT NULL DEFAULT 0,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    task_id VARCHAR(36) REFERENCES tasks(id) ON DELETE SET NULL,
+    upload_ref VARCHAR(1024),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TIMESTAMPTZ,
+    last_error TEXT,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT ck_recording_window_status CHECK (status IN ('pending', 'submitting', 'processing', 'publishing', 'completed', 'blocked')),
+    CONSTRAINT ck_recording_window_counts CHECK (sequence >= 0 AND size_bytes > 0 AND attempts >= 0),
+    CONSTRAINT ck_recording_window_range CHECK (start_seconds >= 0 AND end_seconds > start_seconds AND end_seconds < 'Infinity'::double precision AND overlap_seconds >= 0 AND overlap_seconds < end_seconds - start_seconds),
+    CONSTRAINT ck_recording_window_hash CHECK (sha256 ~ '^[0-9a-f]{64}$')
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_recording_window_identity ON recording_windows (channel_id, session_id, epoch, sequence);
+CREATE INDEX IF NOT EXISTS ix_recording_windows_pending ON recording_windows (channel_id, status, next_attempt_at, created_at);
+
+-- Frontend schema compatibility on fresh Linux installs
+-- Mirror the frontend routing migration for fresh backend/bootstrap databases.
+ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "stripe_account_id" VARCHAR(255);
+CREATE TABLE IF NOT EXISTS "stripe_webhook_events" (
+  "id" VARCHAR(255) PRIMARY KEY,
+  "type" VARCHAR(255) NOT NULL,
+  "created_at" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+ALTER TABLE "stripe_webhook_events"
+  ADD COLUMN IF NOT EXISTS "status" VARCHAR(20) NOT NULL DEFAULT 'processed',
+  ADD COLUMN IF NOT EXISTS "claim_token" VARCHAR(255),
+  ADD COLUMN IF NOT EXISTS "lease_expires_at" TIMESTAMPTZ;
+
+CREATE TABLE IF NOT EXISTS "stripe_account_migrations" (
+  "id" VARCHAR(255) PRIMARY KEY,
+  "user_id" VARCHAR(255) NOT NULL UNIQUE REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+  "source_account" VARCHAR(255) NOT NULL,
+  "source_customer" VARCHAR(255) NOT NULL,
+  "source_subscription" VARCHAR(255) NOT NULL,
+  "destination_account" VARCHAR(255) NOT NULL,
+  "destination_customer" VARCHAR(255) NOT NULL,
+  "destination_subscription" VARCHAR(255),
+  "destination_schedule" VARCHAR(255),
+  "stage" VARCHAR(32) NOT NULL CHECK ("stage" IN ('prepared','source_stopped','destination_staged','destination_active','rollback_verified','cancelled')),
+  "revision" INTEGER NOT NULL DEFAULT 0,
+  "paid_through" TIMESTAMPTZ NOT NULL,
+  "source_stopped_verified" BOOLEAN NOT NULL DEFAULT false,
+  "source_resumed_verified" BOOLEAN NOT NULL DEFAULT false,
+  "destination_disabled_verified" BOOLEAN NOT NULL DEFAULT false,
+  "destination_paid_invoice" VARCHAR(255),
+  "cancellation_requested" BOOLEAN NOT NULL DEFAULT false,
+  "recovery_required" BOOLEAN NOT NULL DEFAULT false,
+  "review_reason" TEXT,
+  "livemode" BOOLEAN NOT NULL,
+  "updated_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE ("source_account", "source_customer"),
+  UNIQUE ("destination_account", "destination_customer"),
+  CHECK ("source_account" <> "destination_account")
+);

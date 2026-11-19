@@ -1,0 +1,5 @@
+# Existing trusted ingress owns public TLS; Caddy stays on a private HTTP bind.
+services:
+  caddy:
+    volumes:
+      - ./Caddyfile.external-https:/etc/caddy/Caddyfile:ro

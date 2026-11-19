@@ -1,0 +1,17 @@
+# Default local HTTP mode; use a private network or SSH tunnel for remote setup.
+:80 {
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+	handle_path /backend/* {
+		reverse_proxy backend:8000 {
+			flush_interval -1
+		}
+	}
+	handle {
+		encode zstd gzip
+		reverse_proxy frontend:3107
+	}
+}

@@ -64,7 +64,22 @@ SETTING_METADATA = {
     },
     "YOUTUBE_DATA_API_KEY": {
         "label": "YouTube Data API key",
-        "description": "Optional metadata provider key.",
+        "description": "Optional metadata lookup key. This does not download videos or resolve a blocked YouTube connection.",
+        "input_type": "password",
+    },
+    "YOUTUBE_PROXY_URL": {
+        "label": "YouTube import proxy",
+        "description": "Proxy connection used for both video metadata and downloads when YouTube blocks this server. Credentials are stored encrypted. Optional {session} and {country} placeholders are supported.",
+        "input_type": "password",
+    },
+    "YOUTUBE_PROXY_COUNTRY": {
+        "label": "YouTube proxy country",
+        "description": "Optional two-letter country code used by a {country} placeholder in the proxy connection.",
+        "input_type": "text",
+    },
+    "YOUTUBE_POT_PROVIDER_URL": {
+        "label": "YouTube token provider",
+        "description": "Optional bgutil HTTP token-provider endpoint for YouTube playback challenges. This does not replace a working proxy connection.",
         "input_type": "password",
     },
     "APIFY_API_TOKEN": {
@@ -77,6 +92,12 @@ SETTING_METADATA = {
         "description": "Optional B-roll stock footage provider key.",
         "input_type": "password",
     },
+    "YOUTUBE_OAUTH_CLIENT_ID": {"label": "YouTube OAuth client ID", "description": "Google Cloud OAuth app used to connect YouTube accounts.", "input_type": "text"},
+    "YOUTUBE_OAUTH_CLIENT_SECRET": {"label": "YouTube OAuth client secret", "description": "Secret for the registered YouTube OAuth app.", "input_type": "password"},
+    "TIKTOK_CLIENT_KEY": {"label": "TikTok app client key", "description": "Client key for a registered TikTok developer app.", "input_type": "text"},
+    "TIKTOK_CLIENT_SECRET": {"label": "TikTok app client secret", "description": "Secret for the registered TikTok developer app.", "input_type": "password"},
+    "INSTAGRAM_APP_ID": {"label": "Instagram app ID", "description": "Meta app used to connect Instagram professional accounts.", "input_type": "text"},
+    "INSTAGRAM_APP_SECRET": {"label": "Instagram app secret", "description": "Secret for the registered Instagram app.", "input_type": "password"},
 }
 
 

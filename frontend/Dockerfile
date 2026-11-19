@@ -75,6 +75,7 @@ ENV SKIP_LINT=1
 ARG NEXT_PUBLIC_API_URL=http://localhost:8000
 ARG NEXT_PUBLIC_APP_URL=http://localhost:3107
 ARG NEXT_PUBLIC_SELF_HOST=true
+ARG NEXT_PUBLIC_SELF_HOST_SINGLE_USER=false
 ARG NEXT_PUBLIC_PRO_PRICE_MONTHLY=9.99
 ARG NEXT_PUBLIC_SCALE_PRICE_MONTHLY=24.99
 ARG NEXT_PUBLIC_PRO_PRICE_ANNUAL=99.90
@@ -97,6 +98,7 @@ ARG POSTHOG_RELEASE_VERSION=
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 ENV NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
 ENV NEXT_PUBLIC_SELF_HOST=${NEXT_PUBLIC_SELF_HOST}
+ENV NEXT_PUBLIC_SELF_HOST_SINGLE_USER=${NEXT_PUBLIC_SELF_HOST_SINGLE_USER}
 ENV NEXT_PUBLIC_PRO_PRICE_MONTHLY=${NEXT_PUBLIC_PRO_PRICE_MONTHLY}
 ENV NEXT_PUBLIC_SCALE_PRICE_MONTHLY=${NEXT_PUBLIC_SCALE_PRICE_MONTHLY}
 ENV NEXT_PUBLIC_PRO_PRICE_ANNUAL=${NEXT_PUBLIC_PRO_PRICE_ANNUAL}
@@ -113,6 +115,10 @@ ENV NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST}
 ENV NEXT_PUBLIC_MAX_VIDEO_UPLOAD_BYTES=${NEXT_PUBLIC_MAX_VIDEO_UPLOAD_BYTES}
 
 RUN pnpm run build
+
+# Keep the engine outside development source mounts and select the native CPU
+# architecture on either supported Linux host architecture.
+RUN node -e 'const fs = require("fs"); const target = process.arch === "arm64" ? "linux-arm64-openssl-3.0.x" : "debian-openssl-3.0.x"; fs.mkdirSync("/app/prisma-engine", {recursive:true}); fs.copyFileSync(`/app/src/generated/prisma/libquery_engine-${target}.so.node`, "/app/prisma-engine/query-engine.so.node");'
 
 # Runner stage (for production)
 # Next's standalone output is a Node server, so production only needs Node.
@@ -143,9 +149,8 @@ COPY --from=builder /app/prisma ./prisma
 # compatibility. Keep the native Prisma engine outside that mount and point
 # Prisma at the immutable copy so authentication cannot lose database access.
 COPY --from=builder --chown=nextjs:nodejs \
-    /app/src/generated/prisma/libquery_engine-debian-openssl-3.0.x.so.node \
-    /app/prisma-engine/libquery_engine-debian-openssl-3.0.x.so.node
-ENV PRISMA_QUERY_ENGINE_LIBRARY=/app/prisma-engine/libquery_engine-debian-openssl-3.0.x.so.node
+    /app/prisma-engine/query-engine.so.node /app/prisma-engine/query-engine.so.node
+ENV PRISMA_QUERY_ENGINE_LIBRARY=/app/prisma-engine/query-engine.so.node
 
 # Raises Node's 300-second limit for receiving a request, which cut off slow
 # streamed uploads to /api/upload with a 408 (see the file).

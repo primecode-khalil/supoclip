@@ -1,0 +1,9 @@
+# Merged only when private .env sets VPS_HTTPS=true (installer --domain).
+services:
+  caddy:
+    ports: !override
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile.https:/etc/caddy/Caddyfile:ro

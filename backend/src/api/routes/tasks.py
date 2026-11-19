@@ -47,7 +47,7 @@ from ...workers.job_queue import JobQueue
 from ...workers.progress import ProgressTracker
 from ...config import get_config
 from ...youtube_utils import async_get_youtube_video_info, canonical_youtube_url, has_verified_duration
-from ...youtube_proxy import YouTubeAgeRestrictedError, YouTubeGeoRestrictedError
+from ...youtube_proxy import YouTubeAccessBlockedError, YouTubeAgeRestrictedError, YouTubeGeoRestrictedError
 from ...stream_source import (
     PREFLIGHT_DEADLINE_SECONDS as STREAM_PREFLIGHT_DEADLINE_SECONDS,
     StreamDurationUnavailableError,
@@ -121,6 +121,11 @@ async def _preflight_youtube_source(url: str, duration_limit: int) -> Dict[str, 
         duration = metadata["duration"]
     except _DurationUnavailable:
         raise _duration_unavailable_error("YouTube") from None
+    except YouTubeAccessBlockedError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "YOUTUBE_ACCESS_BLOCKED", "message": f"{exc} No minutes were used."},
+        ) from None
     except YouTubeGeoRestrictedError as exc:
         raise HTTPException(
             status_code=422,
@@ -665,6 +670,15 @@ async def _create_task(request: Request, db: AsyncSession, attempt: SourceAttemp
         upload_options["workflow"] = workflow_spec.workflow
         upload_options["workflow_options"] = workflow_options
     upload_request_key = _upload_request_key(request, raw_source["url"], upload_options)
+    history_window_id = None
+    if db is not None:
+        from ...recording.history import recording_window_for_task
+        from ...recording.errors import RecordingError
+
+        try:
+            history_window_id = await recording_window_for_task(db, user_id, _request_idempotency_key(request), raw_source["url"])
+        except RecordingError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     if upload_request_key and db is not None:
         existing = await TaskRepository.find_recent_upload_task(db, user_id, upload_request_key)
         if existing is not None:
@@ -736,6 +750,21 @@ async def _create_task(request: Request, db: AsyncSession, attempt: SourceAttemp
                         return duplicate_source_response(str(existing.id), existing.job_id)
                 # Create task while the source lock is held, so a second
                 # request waits and then finds this row instead of charging.
+                processing_job_id = f"submission:{secrets.token_hex(16)}"
+                initial_source_metadata = _merge_task_source_metadata(
+                    {
+                        "processing_job_id": processing_job_id,
+                        "clip_length": clip_length,
+                        "enqueued_at": datetime.now(timezone.utc).isoformat(),
+                        **({"recording_window_id": history_window_id} if history_window_id else {}),
+                        **({"durable_upload_request": True} if upload_request_key and _request_idempotency_key(request) else {}),
+                        **({"source_key": source_key} if source_key else {}),
+                        **_stream_resolution_metadata(stream_metadata),
+                    },
+                    source_url=raw_source["url"], source_type=source_type,
+                    output_format=output_format, add_subtitles=add_subtitles,
+                    cleanup_settings=cleanup_settings,
+                )
                 task_id = await task_service.create_task_with_source(
                     user_id=user_id,
                     url=raw_source["url"],
@@ -748,6 +777,7 @@ async def _create_task(request: Request, db: AsyncSession, attempt: SourceAttemp
                     processing_mode=processing_mode,
                     source_duration_seconds=math.ceil(duration_seconds),
                     upload_request_key=upload_request_key,
+                    initial_source_metadata=initial_source_metadata,
                     workflow=workflow_spec.workflow,
                     workflow_options=workflow_options,
                 )

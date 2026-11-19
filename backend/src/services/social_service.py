@@ -456,6 +456,8 @@ class SocialService:
         hashtags: Optional[List[str]],
         privacy_level: Optional[str],
         scheduled_for: Optional[str],
+        request_key: Optional[str] = None,
+        request_hash: Optional[str] = None,
     ) -> Dict[str, Any]:
         task = await self.task_repo.get_task_by_id(self.db, task_id)
         if not task or task.get("user_id") != user_id:
@@ -533,6 +535,7 @@ class SocialService:
             media_token=secrets.token_urlsafe(32),
             source_file_path=clip_file,
             clip_snapshot=clip,
+            **({"request_key": request_key, "request_hash": request_hash} if request_key else {}),
         )
         if status == "queued":
             await self._enqueue_or_fail(post["id"], int(post.get("attempts") or 0))

@@ -25,7 +25,7 @@ curl https://api.supoclip.com/tasks/ \
   -H "x-api-key: sk_..."
 ```
 
-API keys authenticate `/tasks/*`, `/fonts` and `/upload`. Revoking a key in the app takes effect immediately. For AI agents (Claude, Cursor and other MCP clients), use the [SupoClip MCP server](../mcp/README.md), which wraps this API. The hosted server is at `https://mcp.supoclip.com/mcp` with the same key as a header:
+API keys authenticate `/tasks/*`, `/fonts`, `/upload` and `/recording/*`. Revoking a key in the app takes effect immediately. For AI agents (Claude, Cursor and other MCP clients), use the [SupoClip MCP server](../mcp/README.md), which wraps this API. The hosted server is at `https://mcp.supoclip.com/mcp` with the same key as a header:
 
 ```bash
 claude mcp add --transport http supoclip https://mcp.supoclip.com/mcp --header "Authorization: Bearer sk_..."
@@ -498,3 +498,7 @@ If a route seems broken:
 - [Architecture](./architecture.md)
 - [Development](./development.md)
 - [Troubleshooting](./troubleshooting.md)
+
+## Recording registry and sessions
+
+The authenticated backend `/recording/channels` API supports channel create/list/get/update, channel-scoped session registration/listing, and session get/status updates at `/recording/sessions/{id}`. Enable and configure supervised capture with GET/PUT `/recording/channels/{id}/automation`; read windows at `/recording/channels/{id}/windows` and retry blocked windows with POST `/recording/channels/{id}/windows/{window_id}/retry`. See [Recording registry and session ledger](./recording.md) for bodies, replay behavior, lifecycle rules and database guarantees.

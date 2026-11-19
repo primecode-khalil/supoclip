@@ -429,6 +429,14 @@ class SocialRepository:
     # Posts
     # ------------------------------------------------------------------
     @staticmethod
+    async def get_post_request(db: AsyncSession, user_id: str, key: str):
+        result = await db.execute(text("""
+            SELECT post_id, request_hash FROM social_post_requests
+            WHERE user_id=:user AND request_key=:key
+        """), {"user": user_id, "key": key})
+        return result.first()
+
+    @staticmethod
     async def create_post(
         db: AsyncSession,
         *,
@@ -446,6 +454,8 @@ class SocialRepository:
         media_token: Optional[str],
         source_file_path: Optional[str],
         clip_snapshot: Dict[str, Any],
+        request_key: Optional[str] = None,
+        request_hash: Optional[str] = None,
     ) -> Dict[str, Any]:
         post_id = str(uuid4())
         await db.execute(
@@ -492,6 +502,11 @@ class SocialRepository:
                 "clip_duration": clip_snapshot.get("duration"),
             },
         )
+        if request_key:
+            await db.execute(text("""
+                INSERT INTO social_post_requests(user_id,request_key,request_hash,post_id)
+                VALUES (:user,:key,:hash,:post)
+            """), {"user": user_id, "key": request_key, "hash": request_hash, "post": post_id})
         await db.commit()
         post = await SocialRepository.get_post(db, post_id)
         assert post is not None

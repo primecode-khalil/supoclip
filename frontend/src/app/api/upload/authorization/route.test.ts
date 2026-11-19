@@ -99,4 +99,24 @@ describe("/api/upload/authorization", () => {
     expect(await response.json()).toMatchObject({ directUpload: true, uploadUrl: "https://api.supoclip.com/upload" });
   });
 
+  it("uses a dedicated public upload endpoint while keeping authorization internal", async () => {
+    vi.stubEnv("BACKEND_AUTH_SECRET", "secret");
+    vi.stubEnv("BACKEND_INTERNAL_URL", "http://backend:8000");
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "https://clips.example.com/backend");
+    vi.stubEnv("UPLOAD_PUBLIC_URL", "https://uploads.clips.example.com/backend/upload");
+    vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    vi.mocked(auth.api.getSession).mockResolvedValue({ user: { id: "owner" } } as never);
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ storage: "local" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const response = await POST(new Request("https://clips.example.com/api/upload/authorization", {
+      method: "POST", body: JSON.stringify({ filename: "video.mp4", size: 241172480, contentType: "video/mp4" }),
+    }));
+    expect(fetchMock).toHaveBeenCalledWith("http://backend:8000/upload/authorize", expect.anything());
+    expect(await response.json()).toMatchObject({
+      directUpload: true,
+      uploadUrl: "https://uploads.clips.example.com/backend/upload",
+      headers: { "x-supoclip-user-id": "owner" },
+    });
+  });
+
 });

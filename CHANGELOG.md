@@ -4,6 +4,31 @@ What changed in SupoClip for people using the product. Newest dates are first.
 
 Add a line here when a pull request changes something a user can see. Use **New**, **Improved**, **Fixed**, or **Under the hood**, describe the change in plain language, and link the pull request. Skip internal-only work, or fold it into one **Under the hood** line. Do not include customer names, email addresses, user IDs, or anything else private.
 
+## 2026-11-19
+
+- **New:** Clear failed or all finished clip-window history from Live channels while keeping captured recordings and library clips. Deleting a generation from the library also removes its attached window from recent activity, and cleared work stays cleared after recorder recovery. ([#1](https://github.com/primecode-khalil/supoclip/pull/1))
+
+## 2026-11-18
+
+- **Fixed:** YouTube live recording preserves the shared audio/video clock when merging separate streams, preventing early audio in generated clips and keeping caption timing aligned. Previously captured media needs a corrected source before regeneration. ([#1](https://github.com/primecode-khalil/supoclip/pull/1))
+- **New:** Pair your Mac from Live channels with one setup command to use its home connection for YouTube imports and live recording. The private helper reconnects automatically, starts at login, and can be disconnected from the dashboard without a VPN or router changes. Keep the Mac awake and online during capture. ([#1](https://github.com/primecode-khalil/supoclip/pull/1))
+- **Fixed:** YouTube live recording now uses the same downloader for discovery and video/audio capture, with the pinned November playback fix and clear messages when YouTube rejects the connection. ([#1](https://github.com/primecode-khalil/supoclip/pull/1))
+
+## 2026-11-16
+
+- **Fixed:** Large file uploads can use a dedicated HTTPS upload gateway, avoiding a shared ingress's short request-body timeout while keeping account authorization in the app. ([#1](https://github.com/primecode-khalil/supoclip/pull/1))
+
+- **Fixed:** YouTube imports now identify server connection blocks instead of reporting an unknown video length. Configure encrypted YouTube proxy and token-provider settings in Admin; metadata API keys are labeled separately from downloads. Fresh installations also start without the copied upstream incident banner. ([#1](https://github.com/primecode-khalil/supoclip/pull/1))
+
+- **Fixed:** Fresh installation builds the shared backend image once, avoiding conflicting worker-image exports on Docker's containerd image store. ([#1](https://github.com/primecode-khalil/supoclip/pull/1))
+
+- **Improved:** Install behind an existing HTTPS ingress while keeping SupoClip's HTTP port private and its account callbacks on the public HTTPS address. ([#1](https://github.com/primecode-khalil/supoclip/pull/1))
+
+- **Improved:** Reaching the daily automatic publishing limit keeps extra clips in your library while recording continues. Posts already submitted still finish or show their recovery status. ([#1](https://github.com/primecode-khalil/supoclip/pull/1))
+
+- **New:** Install the fork on a Linux host with one script, then use Live channels to monitor Twitch, Kick and YouTube streams, create captioned vertical clips, and publish selected clips to configured YouTube or Instagram accounts. Setup protects the first owner and keeps AI and social app credentials encrypted. ([#1](https://github.com/primecode-khalil/supoclip/pull/1))
+- **Under the hood:** Recording survives worker restarts with database leases, finalized segments, overlapping windows and durable render/publication receipts. Disk guards preserve unfinished originals, optional archives copy them offsite, and blocked work can be retried from the dashboard. ([#1](https://github.com/primecode-khalil/supoclip/pull/1))
+
 ## 2026-11-15
 
 - **New:** Settings → Agents & API shows how to connect Claude, ChatGPT or Grok: open the assistant's connector page, paste the SupoClip server URL and sign in. No key to copy. Each assistant lists which of its plans support this. Claude Code can sign in the same way. API keys moved into one tidy list with a Create key button; a new key opens with its Cursor and local config filled in. ([#403](https://github.com/FujiwaraChoki/supoclip/pull/403))

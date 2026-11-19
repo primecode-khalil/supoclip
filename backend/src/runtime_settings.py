@@ -22,8 +22,17 @@ RUNTIME_SETTING_KEYS: tuple[str, ...] = (
     "OLLAMA_BASE_URL",
     "OLLAMA_API_KEY",
     "YOUTUBE_DATA_API_KEY",
+    "YOUTUBE_PROXY_URL",
+    "YOUTUBE_PROXY_COUNTRY",
+    "YOUTUBE_POT_PROVIDER_URL",
     "APIFY_API_TOKEN",
     "PEXELS_API_KEY",
+    "YOUTUBE_OAUTH_CLIENT_ID",
+    "YOUTUBE_OAUTH_CLIENT_SECRET",
+    "TIKTOK_CLIENT_KEY",
+    "TIKTOK_CLIENT_SECRET",
+    "INSTAGRAM_APP_ID",
+    "INSTAGRAM_APP_SECRET",
 )
 
 PROCESS_ENV_SETTING_KEYS = frozenset(
@@ -92,6 +101,8 @@ def decrypt_setting_value(encrypted_value: str) -> str:
 
 
 async def load_runtime_settings_cache(db: AsyncSession) -> None:
+    from .home_proxy import refresh_home_proxy
+    await refresh_home_proxy(db)
     rows = await db.execute(
         text(
             """
