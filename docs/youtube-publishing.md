@@ -80,12 +80,20 @@ pending; the original schedule may still publish, so use YouTube Studio if urgen
 If the video already went public, the app reports that truth and keeps its link.
 It does not automatically delete or privatize an already public video.
 
-Deleting a library clip cancels unstarted work and requests cancellation of its
-future native schedule. External IDs/history receipts remain for reconciliation.
-Native schedule history cannot be deleted before cancellation is confirmed.
-Disconnecting a channel pauses intake/uploads and requests cancellation first;
-credentials stay connected until it finishes. Account deletion also waits, so a
-failed backend request cannot discard the only way to withdraw a schedule.
+Before deleting a generation, clip or selected batch, the dialog lists linked
+pending YouTube uploads and requires **Delete the linked YouTube uploads too**.
+The source is the app's truth: deletion stops unstarted jobs and permanently
+removes linked scheduled/private YouTube copies. Track Deletion pending and
+Deleted from YouTube in Publishing. Google must confirm absence; IDs/history
+receipts remain for recovery. A selected upload that goes public while removal
+is in progress is still removed. Already-published history shown separately in
+the warning stays on YouTube.
+
+Disconnecting a channel withdraws schedules and keeps private copies; credentials
+stay connected until that finishes. Deleting the whole app account instead
+removes its pending/private copies first and waits for confirmation. A failed
+backend request cannot discard the only way to complete remote removal. Native
+schedule history cannot be deleted while a remote outcome remains unresolved.
 
 ## Operations and rollback
 

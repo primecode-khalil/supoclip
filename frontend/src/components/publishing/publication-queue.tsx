@@ -7,6 +7,8 @@ import type { SocialPost } from "@/lib/social";
 import { publicationTime, publishingJSON } from "./api";
 
 export function publicationLabel(post: SocialPost) {
+  if (post.stage === "deleted") return "Deleted from YouTube";
+  if ((post.provider_options?.delete_remote || post.stage === "deleting" || (post.provider_options?.native_schedule && post.clip_id === null && !["published","cancelled"].includes(post.status))) && post.status !== "cancelled") return "Deletion pending · YouTube copy may still be live";
   if (post.status === "cancelled") return "Cancelled · kept private";
   if (post.provider_options?.cancel_requested && post.status !== "published") return "Cancellation pending · check YouTube until confirmed";
   if (post.status === "failed") return "Needs attention";
@@ -39,7 +41,7 @@ function QueueRow({ post, timezone, onRefresh }: { post: SocialPost; timezone: s
   return <article className="min-w-0 p-4 sm:p-5">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div className="min-w-0 flex-1"><h3 className="break-words font-medium">{post.title || "Untitled Short"}</h3><p className="mt-1 text-sm text-muted-foreground">{publicationLabel(post)}</p><p className="mt-2 text-sm">{publicationTime(post.scheduled_for, timezone)} · {timezone}</p></div>
-      {post.external_url && <a href={post.external_url} target="_blank" rel="noreferrer" className="inline-flex shrink-0 items-center gap-1 text-sm underline underline-offset-4">View on YouTube<ExternalLink className="size-3" /></a>}
+      {post.external_url && post.stage !== "deleted" && <a href={post.external_url} target="_blank" rel="noreferrer" className="inline-flex shrink-0 items-center gap-1 text-sm underline underline-offset-4">View on YouTube<ExternalLink className="size-3" /></a>}
     </div>
     {post.stage === "uploading" && progress !== null && <div className="mt-3 flex items-center gap-3"><progress aria-label="Upload progress" max={100} value={progress} className="h-2 w-full" /><span className="text-xs tabular-nums">{progress}%</span></div>}
     {post.error_message && <p className="mt-3 break-words text-sm text-destructive">{post.error_message}</p>}

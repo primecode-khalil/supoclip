@@ -246,6 +246,11 @@ class YouTubeProvider(YouTubeUploadProtocol, SocialProvider):
         except (ValueError, AttributeError, TypeError):
             raise YouTubeUploadError("YouTube's processing status is temporarily unavailable.", "temporary", retryable=True) from None
 
+    def delete_video(self, access_token: str, video_id: str) -> None:
+        response = self._upload_request("delete", f"{API_BASE}/videos", access_token, params={"id":video_id})
+        if response.status_code not in (204,404):
+            raise_youtube_error(response)
+
     def update_video_status(self, access_token: str, video_id: str, status: dict) -> dict:
         response = self._upload_request("put", f"{API_BASE}/videos", access_token,
             params={"part": "status"}, json={"id": video_id, "status": status})

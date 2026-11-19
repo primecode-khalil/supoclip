@@ -43,6 +43,11 @@ class Google(FakeSession):
             raise requests.Timeout("private-request")
         return FakeResponse(200, deepcopy(self.resource))
 
+    def delete(self,url,**kwargs):
+        self.calls.append(("DELETE",url,kwargs))
+        self.resource = {}
+        return FakeResponse(204,{})
+
 
 @pytest.fixture
 async def native(review_item, client, auth_headers, app, db_session, monkeypatch):
@@ -133,18 +138,14 @@ async def test_cancel_waits_for_google_confirmation_and_keeps_video_private(nati
     assert http.resource["status"]["privacyStatus"] == "private" and inserts(http) == 1
 
 
-async def test_library_deletion_requests_native_cancellation_without_losing_receipt(native, db_session, client, auth_headers):
+async def test_library_deletion_requires_warning_acknowledgement(native, db_session, client, auth_headers):
     service, post, http, path = native
     await scheduled(native, db_session)
     response = await client.delete(f"/tasks/{post['task_id']}", headers=auth_headers)
-    assert response.status_code == 200
+    assert response.status_code == 409
     result = await service.get_post("user-1", post["id"])
-    assert result["status"] != "cancelled"
-    await due(db_session, post["id"])
-    await service.publish_post(post["id"])
-    result = await service.get_post("user-1", post["id"])
-    assert result["clip_id"] is None and result["status"] == "cancelled"
-    assert "publishAt" not in http.resource["status"] and inserts(http) == 1
+    assert result["clip_id"] is not None and result["status"] == "scheduled" and path.exists()
+    assert "publishAt" in http.resource["status"] and inserts(http) == 1
 
 
 async def test_cancel_racing_already_public_is_truthful(native, db_session):

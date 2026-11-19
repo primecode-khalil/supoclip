@@ -105,6 +105,8 @@ export function DeleteAccountSection({ email, hasAppStoreSubscription = false }:
                 <DialogDescription>{t("deleteAccount.dialogBody")}</DialogDescription>
               </DialogHeader>
 
+              <p className="text-sm text-muted-foreground">Linked pending YouTube uploads will also be permanently deleted. Account deletion waits for YouTube confirmation and may need reconnection. Already published videos stay on YouTube.</p>
+
               {hasAppStoreSubscription && (
                 <Alert className="border-amber-200 bg-amber-50 dark:border-amber-900/60 dark:bg-amber-950/40">
                   <AlertCircle className="h-4 w-4 text-amber-600" />

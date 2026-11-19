@@ -13,7 +13,7 @@ from ..social.youtube_metadata import build_youtube_metadata
 from ..social.youtube_upload import YouTubeUploadError, UploadProgress
 from ..utils.async_helpers import run_in_thread
 from ..repositories.social_provider_limit_repository import SocialProviderLimitRepository as Limits
-from .youtube_native_schedule import YouTubeNativeSchedule, native, withdrawing
+from .youtube_native_schedule import YouTubeNativeSchedule, native, withdrawing, deleting_source
 
 
 def _identity(path: str) -> tuple[str, int]:
@@ -52,6 +52,9 @@ class YouTubePublishService(YouTubeNativeSchedule):
                 media_token_expires_at=datetime.now(timezone.utc) + timedelta(hours=3), upload_handle=f"youtube:{post_id}")
             if not post:
                 return await self._post(post_id)
+        if native(post) and withdrawing(post) and not state:
+            await self.social.repo.finish_unstarted_native_cancel(self.db,post_id)
+            return await self._post(post_id)
         account = await self.social.repo.get_account_with_tokens(self.db, post.get("social_account_id"))
         if not account or account.get("user_id") != post["user_id"] or account.get("revoked_at"):
             if state:
@@ -196,7 +199,7 @@ class YouTubePublishService(YouTubeNativeSchedule):
         token = lease["lease_token"]
         try:
             started = lease.get("processing_started_at") or lease["created_at"]
-            if not lease.get("schedule_requested_at") and datetime.now(timezone.utc) - started > timedelta(hours=6):
+            if not deleting_source(post) and not lease.get("schedule_requested_at") and datetime.now(timezone.utc) - started > timedelta(hours=6):
                 raise YouTubeUploadError("YouTube processing could not be confirmed within six hours. Retry to check the same video again.", "processing_timeout", outcome_unknown=True)
             wait = await Limits.due(self.db, self.social.config, "general")
             if wait:
@@ -205,6 +208,11 @@ class YouTubePublishService(YouTubeNativeSchedule):
             access_token = await self.social._get_valid_access_token(account)
             await self.db.commit()
             video = await run_in_thread(self.provider.fetch_video_status, access_token, lease["video_id"])
+            latest = await self._post(post["id"])
+            await self.db.commit()
+            if deleting_source(latest):
+                await self._delete_native_copy(latest,account,lease,access_token,video)
+                return
             if not video and lease.get("schedule_requested_at") and datetime.now(timezone.utc)-lease["schedule_requested_at"] > timedelta(hours=6):
                 raise YouTubeUploadError("This scheduled video is unavailable. Check whether it was deleted or access changed in YouTube Studio.", "video_unavailable", outcome_unknown=True)
             status = video.get("status") or {}

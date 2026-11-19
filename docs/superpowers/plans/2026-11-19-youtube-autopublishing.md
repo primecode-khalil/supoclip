@@ -28,7 +28,7 @@
 - No extra LLM call is mandatory for review, metadata or scheduling.
 - Pause intake/uploading independently of recording. Already confirmed YouTube schedules continue on YouTube unless explicitly cancelled.
 - Cancel a native schedule on YouTube before reporting it cancelled; failed cancellation must remain visible as still needing action.
-- Deleting a library item cancels its unstarted work and requests cancellation of any attached future native schedule; keep external video/history receipts.
+- Deleting a library item warns about linked pending/private YouTube uploads, cancels unstarted work and requests verified remote deletion; keep external video/history receipts.
 - Bound review intake to 200 pending items per destination and unattended approval to nine unpublished items; excess clips remain in the library.
 - No real public upload/schedule, account connection, or automatic-approval activation without the corresponding explicit owner action.
 
@@ -214,6 +214,17 @@ production deploy and image security scripts.
 - [ ] Drain active application/ARQ jobs before a later VPS restart, retain source/image rollback points and verify health/live changelog. Do not connect an account or create a real public schedule without owner action.
 - [ ] Once the owner completes consent and explicitly approves a private test or a scheduled clip, verify actual channel, processing, privacy/schedule, captions and A/V playback. Until then report external setup/test gates as pending rather than claiming live YouTube proof.
 - [ ] Commit documentation/evidence references, push/link the PR and report verified behavior, remaining setup and any deferred limitations.
+
+### Task 8: Synchronized source deletion (execute before Task 7 rollout)
+
+**Files:** YouTube provider/native orchestration, social repository/impact API,
+clip/task deletion guard, library and generation confirmation dialogs, shared
+warning component and backend/component/browser regressions.
+
+- [ ] Reproduce missing warning/acknowledgement, permanent remote deletion, lost delete reply, queued/no-ID cancellation, concurrent orphan and published-during-delete cases.
+- [ ] Add owner-scoped deletion-impact preview. Require explicit acknowledgement before source DELETE affects pending YouTube uploads. Show affected copies in generation/clip/bulk dialogs.
+- [ ] Persist remote-delete intent with library deletion; infer it for orphaned native uploads to cover approval races. Delete the existing ID and verify absence before terminal Deleted state. Keep receipts and distinguish ordinary schedule cancellation.
+- [ ] Verify owner isolation, real delete entry points, retained-state errors and UI warnings. Run focused backend/frontend suites, make check and browser flows; commit before final images, scans and deployment.
 
 ## Self-review
 

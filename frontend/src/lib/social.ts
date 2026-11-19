@@ -57,8 +57,8 @@ export interface SocialPost {
   social_account_id: string | null;
   provider: SocialProviderId;
   status: SocialPostStatus;
-  provider_options?: { native_schedule?: boolean; cancel_requested?: boolean };
-  stage?: "paused" | "scheduling" | "youtube_scheduled" | "cancelling" | "cancelled" | "queued" | "waiting_for_slot" | "uploading" | "processing" | "ready" | "waiting_for_quota" | "reconnect_required" | "needs_attention" | null;
+  provider_options?: { native_schedule?: boolean; cancel_requested?: boolean; delete_remote?: boolean };
+  stage?: "deleting" | "deleted" | "paused" | "scheduling" | "youtube_scheduled" | "cancelling" | "cancelled" | "queued" | "waiting_for_slot" | "uploading" | "processing" | "ready" | "waiting_for_quota" | "reconnect_required" | "needs_attention" | null;
   confirmed_bytes?: number | null;
   total_bytes?: number | null;
   next_attempt_at?: string | null;

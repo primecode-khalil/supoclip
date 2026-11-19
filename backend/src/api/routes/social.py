@@ -29,6 +29,7 @@ from ...services.social_service import SocialError, SocialService
 from ...repositories.social_repository import SocialRepository
 from ...source_identity import source_admission_lock
 from ...services.social_publication_policy import PublishingPolicy, SocialPublicationPolicyService
+from ...services.social_source_deletion import SourceDeletionSelection
 from ...services.social_review_service import SocialReviewService, ReviewImport, ReviewCandidate, ReviewApproval
 from typing import Literal
 from ...utils.async_helpers import run_in_thread
@@ -136,6 +137,13 @@ async def save_publication_policy(account_id: str, body: PublishingPolicy, reque
         return await SocialPublicationPolicyService(db).save(user_id, account_id, body.model_dump(mode="json", exclude_unset=True))
     except SocialError as exc:
         raise _http_error(exc)
+
+
+@router.post("/deletion-impact")
+async def source_deletion_impact(body: SourceDeletionSelection, request: Request, db: AsyncSession = Depends(get_db)):
+    # Deletion recovery stays available even when publishing intake is disabled.
+    user_id = _session_user_id(request)
+    return await SocialRepository.deletion_impact(db,user_id,body.task_ids,clip_id=body.clip_id)
 
 
 @router.get("/review")

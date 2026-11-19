@@ -378,6 +378,18 @@ class SocialService:
     async def disconnect_all(self, user_id: str) -> int:
         """Disconnect every account of a user (account deletion)."""
         accounts = await self.repo.list_accounts(self.db, user_id)
+        pending = []
+        if hasattr(self.repo, "native_for_disconnect"):
+            for account in accounts:
+                ids = await self.repo.native_for_disconnect(self.db,user_id,account["id"],include_private_copies=True)
+                for post_id in ids:
+                    await self.repo.request_native_cancel(self.db,user_id,post_id,delete_remote=True)
+                    await self._enqueue_recovery(post_id)
+                pending.extend(ids)
+        if pending:
+            error = SocialValidationError("Linked YouTube deletion is pending. Wait for confirmation in Publishing, then delete your account again. Access is retained until removal is confirmed.")
+            error.status_code = 409
+            raise error
         removed = 0
         for account in accounts:
             removed += int(await self.disconnect(user_id, account["id"]))

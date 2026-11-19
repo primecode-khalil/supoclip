@@ -17,6 +17,10 @@ def withdrawing(post):
     return bool(post.get("provider_options", {}).get("cancel_requested") or post.get("clip_id") is None)
 
 
+def deleting_source(post):
+    return native(post) and bool(post.get("provider_options",{}).get("delete_remote") or post.get("clip_id") is None)
+
+
 def parse_time(value):
     if not value:
         return None
@@ -60,12 +64,27 @@ class YouTubeNativeSchedule:
                     await self._accepted(post["id"], lease["lease_token"], progress)
                     await Uploads.defer_until(self.db, post["id"], datetime.now(timezone.utc))
                     return  # Next pass checks and cancels this same private video.
+                if progress.confirmed_bytes == lease["size_bytes"]:
+                    raise YouTubeUploadError("All bytes were accepted but the video ID is still unknown. Check YouTube before treating removal as complete.", "unknown_outcome", outcome_unknown=True)
             # An incomplete session cannot publish: initial upload never contains publishAt.
             await Uploads.native_finish(self.db, post["id"], lease["lease_token"], account["id"], stage="cancelled", status="cancelled", visibility="private")
         except Exception as exc:
             from ..social.base import SocialProviderError
             safe = exc if isinstance(exc, SocialProviderError) else YouTubeUploadError("Cancellation needs attention; check YouTube Studio.", "cancel_unknown", outcome_unknown=True)
             await self._failure(post, account, lease, safe)
+
+    async def _delete_native_copy(self, post, account, lease, access_token, video):
+        token = lease["lease_token"]
+        if video:
+            if (video.get("snippet") or {}).get("channelId") != account["external_account_id"]:
+                raise YouTubeUploadError("The linked video's owner could not be confirmed. Check YouTube Studio.", "destination_mismatch", outcome_unknown=True)
+            if not await Uploads.update(self.db,post["id"],token,stage="deleting"):
+                return
+            await run_in_thread(self.provider.delete_video,access_token,lease["video_id"])
+            remaining = await run_in_thread(self.provider.fetch_video_status,access_token,lease["video_id"])
+            if remaining:
+                raise YouTubeUploadError("YouTube deletion is not confirmed. The linked video will be checked again.", "delete_unconfirmed", retryable=True)
+        await Uploads.native_finish(self.db,post["id"],token,account["id"],stage="deleted",status="cancelled",visibility=None)
 
     async def _native_status(self, post, account, lease, access_token, video):
         token, identity = lease["lease_token"], post["id"]

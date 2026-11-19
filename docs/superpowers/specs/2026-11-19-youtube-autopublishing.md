@@ -40,7 +40,7 @@ clips into review does not upload them and does not enable automatic approval.
 - No extra LLM call is mandatory for review, metadata or scheduling.
 - Pause intake/uploading independently of recording. Already confirmed YouTube schedules continue on YouTube unless explicitly cancelled.
 - Cancel a native schedule on YouTube before reporting it cancelled; failed cancellation must remain visible as still needing action.
-- Deleting a library item cancels its unstarted work and requests cancellation of any attached future native schedule; keep external video/history receipts.
+- Deleting a library item warns about linked pending/private YouTube uploads, cancels unstarted work and requests verified remote deletion; keep external video/history receipts.
 - Bound review intake to 200 pending items per destination and unattended approval to nine unpublished items; excess clips remain in the library.
 - No real public upload/schedule, account connection, or automatic-approval activation without the corresponding explicit owner action.
 
@@ -125,3 +125,19 @@ an owner-approved test is available.
 - [Quota](https://developers.google.com/youtube/data/guides/quota_and_compliance_audits) and [revision history](https://developers.google.com/youtube/data/revision_history): current upload bucket and November private-only restriction change.
 - [OAuth web flow](https://developers.google.com/identity/protocols/oauth2/web-server), [token lifetime](https://developers.google.com/identity/protocols/oauth2), [verification](https://developers.google.com/identity/protocols/oauth2/production-readiness/sensitive-scope-verification)
 - [Shorts duration/aspect](https://support.google.com/youtube/answer/15424877)
+
+## Source deletion synchronization (owner steering, 2026-11-19)
+
+The library is the source of truth for pending approvals and scheduled uploads.
+Before deleting a generation, a clip, or a selected batch, show linked pending
+YouTube uploads and warn that they will be permanently removed remotely. Require
+an explicit deletion acknowledgement at the API when these links exist. Deleting
+library rows durably marks their associated unpublished native posts for remote
+deletion; an orphaned native clip is also treated as a deletion request to cover
+concurrent approvals. Use videos.delete on the known ID and confirm absence.
+Lost replies recover against that ID; preserve receipts. Jobs without a created
+video are cancelled. A selected video that publishes during removal remains in
+the authorized deletion scope; already-published history at the time of source
+deleting is outside that scheduled-upload selection and stays on YouTube.
+Ordinary Cancel schedule still only withdraws the schedule and keeps its private
+video. Distinguish Deletion pending, Deleted on YouTube, and Cancelled in the UI.

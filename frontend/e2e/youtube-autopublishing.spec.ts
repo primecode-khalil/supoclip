@@ -85,3 +85,36 @@ for (const width of [1440, 320]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
 }
+
+for (const width of [1440,320]) {
+  test(`warns before source deletion and requires linked-upload acknowledgement at ${width}px`, async ({page}) => {
+    await page.setViewportSize({width,height:950});
+    let removed = false;
+    await page.route("**/api/**",route => route.fulfill({json:{}}));
+    await page.route("**/api/auth/get-session**",route => route.fulfill({json:{session:{id:"demo-session",userId:"demo-owner",expiresAt:"2099-01-01T00:00:00Z"},user:{id:"demo-owner",name:"Studio Owner",email:"owner@example.com",emailVerified:true}}}));
+    await page.route("**/api/tasks/billing-summary",route => route.fulfill({json:{monetization_enabled:false}}));
+    await page.route("**/api/announcements**",route => route.fulfill({json:{announcements:[]}}));
+    await page.route("**/api/social/providers",route => route.fulfill({json:{enabled:true,providers:[]}}));
+    await page.route(/\/api\/tasks\/?(\?.*)?$/,route => route.fulfill({json:{tasks:removed?[]:[{id:"demo-source",user_id:"demo-owner",source_type:"upload",source_id:"demo-input",source_title:"Demo source",status:"completed",clips_count:2,created_at:"2026-11-19T10:00:00Z",updated_at:"2026-11-19T10:00:00Z"}]}}));
+    await page.route("**/api/social/deletion-impact",route => route.fulfill({json:{affected:[{id:"demo-post",title:"A scheduled Short",destination:"Demo Creator"}],published_retained:1}}));
+    await page.route("**/api/tasks/demo-source?*",route => {
+      expect(route.request().method()).toBe("DELETE");
+      expect(new URL(route.request().url()).searchParams.get("confirm_social_delete")).toBe("true");
+      removed=true;return route.fulfill({json:{message:"Deleted source; linked removal requested"}});
+    });
+    await page.goto("/list");
+    await page.getByRole("checkbox",{name:"Select Demo source",exact:true}).check();
+    await page.getByRole("button",{name:"Delete",exact:true}).click();
+    const dialog=page.getByRole("alertdialog");
+    await expect(dialog.getByText(/A scheduled Short/)).toBeVisible();
+    const confirm=dialog.getByRole("button",{name:"Delete",exact:true});
+    await expect(confirm).toBeDisabled();
+    expect(removed).toBe(false);
+    await dialog.getByRole("checkbox",{name:"Delete the linked YouTube uploads too"}).check();
+    await expect(confirm).toBeEnabled();
+    await page.screenshot({path:`test-results/source-delete-warning-${width}.png`,fullPage:true});
+    await confirm.click();
+    await expect(dialog).not.toBeVisible();
+    expect(removed).toBe(true);
+  });
+}

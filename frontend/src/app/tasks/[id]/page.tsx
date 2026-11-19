@@ -1,5 +1,6 @@
 "use client";
 
+import { SourceDeletionWarning } from "@/components/publishing/source-deletion-warning";
 import { removeTaskDrafts } from "@/lib/editor/draft-cache";
 import { CaptionSizeControl } from "@/components/caption-size-control";
 
@@ -211,6 +212,8 @@ export default function TaskPage() {
   const [isEditing, setIsEditing] = useState(false);
   const [editedTitle, setEditedTitle] = useState("");
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [socialTaskDeleteReady, setSocialTaskDeleteReady] = useState(false);
+  const [socialClipDeleteReady, setSocialClipDeleteReady] = useState(false);
   const [deletingClipId, setDeletingClipId] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [exportPreset, setExportPreset] = useState("original");
@@ -504,11 +507,11 @@ export default function TaskPage() {
   };
 
   const handleDeleteTask = async () => {
-    if (!session?.user?.id || !params.id) return;
+    if (!session?.user?.id || !params.id || !socialTaskDeleteReady) return;
 
     setIsDeleting(true);
     try {
-      const response = await fetch(`${taskApiUrl}/${params.id}`, {
+      const response = await fetch(`${taskApiUrl}/${params.id}?confirm_social_delete=true`, {
         method: "DELETE",
       });
 
@@ -528,10 +531,10 @@ export default function TaskPage() {
   };
 
   const handleDeleteClip = async (clipId: string) => {
-    if (!session?.user?.id || !params.id) return;
+    if (!session?.user?.id || !params.id || !socialClipDeleteReady) return;
 
     try {
-      const response = await fetch(`${taskApiUrl}/${params.id}/clips/${clipId}`, {
+      const response = await fetch(`${taskApiUrl}/${params.id}/clips/${clipId}?confirm_social_delete=true`, {
         method: "DELETE",
       });
 
@@ -1315,9 +1318,10 @@ export default function TaskPage() {
               {t("deleteGenerationBody")}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {showDeleteDialog && <SourceDeletionWarning taskIds={[String(params.id)]} onReady={setSocialTaskDeleteReady} />}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isDeleting}>{t("cancel")}</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeleteTask} disabled={isDeleting} className="bg-red-600 hover:bg-red-700">
+            <AlertDialogAction onClick={handleDeleteTask} disabled={isDeleting || !socialTaskDeleteReady} className="bg-red-600 hover:bg-red-700">
               {isDeleting ? t("deleting") : t("delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -1333,10 +1337,12 @@ export default function TaskPage() {
               {t("deleteClipBody")}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {deletingClipId && <SourceDeletionWarning taskIds={[String(params.id)]} clipId={deletingClipId} onReady={setSocialClipDeleteReady} />}
           <AlertDialogFooter>
             <AlertDialogCancel>{t("cancel")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => deletingClipId && handleDeleteClip(deletingClipId)}
+              disabled={!socialClipDeleteReady}
               className="bg-red-600 hover:bg-red-700"
             >
               {t("delete")}
