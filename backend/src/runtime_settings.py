@@ -125,6 +125,8 @@ async def load_runtime_settings_cache(db: AsyncSession) -> None:
         if bool(row["prefer_admin_value"]):
             prefer_admin_keys.add(setting_key)
         if not encrypted_value:
+            if setting_key in PRIVATE_RUNTIME_SETTING_KEYS:
+                loaded[setting_key] = "!unavailable"
             continue
         try:
             value = decrypt_setting_value(encrypted_value).strip()
@@ -135,9 +137,14 @@ async def load_runtime_settings_cache(db: AsyncSession) -> None:
             continue
         if value:
             loaded[setting_key] = value
+        elif setting_key in PRIVATE_RUNTIME_SETTING_KEYS:
+            loaded[setting_key] = "!unavailable"
 
-    _settings_cache.clear()
+    # Publish replacements before removing absent keys. Synchronous download
+    # threads must never see a retained proxy registry disappear between writes.
     _settings_cache.update(loaded)
+    for key in _settings_cache.keys() - loaded.keys():
+        _settings_cache.pop(key, None)
     _prefer_admin_value_cache.clear()
     _prefer_admin_value_cache.update(prefer_admin_keys)
     logger.info("Loaded %s encrypted runtime settings", len(_settings_cache))

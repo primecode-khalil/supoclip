@@ -8,6 +8,30 @@ import pytest
 from tests.unit.test_proxy_failover import managed  # noqa: F401
 
 
+async def test_slow_proxy_health_does_not_block_live_supervisor_work(managed, monkeypatch):
+    import threading
+    from src.recording import capture
+    from src.proxies import health
+    release = threading.Event()
+    health_finished = threading.Event()
+    def slow_health(connection):
+        release.wait(0.5)
+        health_finished.set()
+        return True
+    async def probe(argv, timeout):
+        return 0, {'streams': {'best': {}}}
+    monkeypatch.setattr(health, 'available', slow_health)
+    monkeypatch.setattr(capture, '_read_json_command', probe)
+    task = asyncio.create_task(capture.probe_channel('https://www.youtube.com/@demo'))
+    try:
+        await asyncio.sleep(0.01)
+        assert not health_finished.is_set(), 'Supervisor work waited for blocking health I/O'
+        assert not task.done(), 'Slow health checks blocked the event loop until discovery finished'
+    finally:
+        release.set()
+        await task
+
+
 async def test_live_probe_fails_over_and_returns_the_winning_route(managed, monkeypatch):
     from src.recording import capture
     from src.proxies import health

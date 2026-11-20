@@ -208,7 +208,7 @@ async def probe_channel(url: str, timeout: float = 30) -> ProbeResult:
             return await _probe_once(source_url, timeout, address)
     deadline = time.monotonic() + timeout
     result = ProbeResult(ProbeState.UNKNOWN, 'proxy_pool_unavailable')
-    for connection in routing.candidates('live'):
+    for connection in await asyncio.to_thread(routing.candidates, 'live'):
         remaining = deadline - time.monotonic()
         if remaining <= 0 or not routing.still_assigned(connection, 'live'):
             continue
@@ -333,7 +333,7 @@ class CaptureProcess:
                 if self.proxy_key:
                     selected = routing.by_key('live', self.proxy_key)
                 elif routing.configured('live'):
-                    choices = routing.candidates('live')
+                    choices = await asyncio.to_thread(routing.candidates, 'live')
                     if not choices:
                         raise routing.ProxyUnavailableError()
                     selected = choices[0]
