@@ -46,6 +46,9 @@ PROCESS_ENV_SETTING_KEYS = frozenset(
     }
 )
 
+# Managed only through the credential-safe Proxy API, never generic Admin forms.
+PRIVATE_RUNTIME_SETTING_KEYS = ("PROXY_CONNECTIONS",)
+
 _settings_cache: dict[str, str] = {}
 _prefer_admin_value_cache: set[str] = set()
 _original_env_values = {key: os.getenv(key) for key in RUNTIME_SETTING_KEYS}
@@ -111,7 +114,7 @@ async def load_runtime_settings_cache(db: AsyncSession) -> None:
             WHERE setting_key = ANY(CAST(:setting_keys AS text[]))
             """
         ),
-        {"setting_keys": list(RUNTIME_SETTING_KEYS)},
+        {"setting_keys": [*RUNTIME_SETTING_KEYS, *PRIVATE_RUNTIME_SETTING_KEYS]},
     )
 
     loaded: dict[str, str] = {}
@@ -127,6 +130,8 @@ async def load_runtime_settings_cache(db: AsyncSession) -> None:
             value = decrypt_setting_value(encrypted_value).strip()
         except Exception as exc:
             logger.warning("Unable to decrypt runtime setting %s: %s", setting_key, exc)
+            if setting_key in PRIVATE_RUNTIME_SETTING_KEYS:
+                loaded[setting_key] = "!unavailable"
             continue
         if value:
             loaded[setting_key] = value
