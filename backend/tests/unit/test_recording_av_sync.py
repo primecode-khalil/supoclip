@@ -47,9 +47,11 @@ async def test_live_capture_keeps_flash_and_beep_synchronized(tmp_path, monkeypa
     with yt_dlp.YoutubeDL(options) as downloader:
         assert FFmpegFD(downloader, options)._call_downloader(str(merged), info) == 0
 
-    monkeypatch.setattr(capture, 'youtube_command', lambda *_: [
-        sys.executable, '-c', 'import pathlib,sys;sys.stdout.buffer.write(pathlib.Path(sys.argv[1]).read_bytes())', str(merged),
-    ])
+    def recorded_input(url, quality, *, proxy_url=None):
+        assert proxy_url == ''  # This regression uses local media, never a network route.
+        return [sys.executable, '-c',
+                'import pathlib,sys;sys.stdout.buffer.write(pathlib.Path(sys.argv[1]).read_bytes())', str(merged)]
+    monkeypatch.setattr(capture, 'youtube_command', recorded_input)
     process = capture.CaptureProcess(tmp_path / 'segments', 'https://www.youtube.com/@demo/live', segment_seconds=60)
     await process.start()
     try:
