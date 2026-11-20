@@ -9,6 +9,7 @@ server IP instead of the proxy.
 from __future__ import annotations
 
 import logging
+import copy
 import math
 import re
 import secrets
@@ -332,7 +333,7 @@ def render_proxy_url(template: str, session_id: str, country: str = "") -> str:
 
 def redact_secrets(text: str) -> str:
     """Strip userinfo so proxy passwords never land in logs."""
-    return re.sub(r"//[^/\s:@]+:[^/\s@]+@", "//***:***@", text or "")
+    return re.sub(r"//[^/\s]+@", "//***:***@", text or "")
 
 
 _URL_IN_LOG = re.compile(r"https?://\S+")
@@ -410,6 +411,20 @@ def log_youtube_attempt(
     logger.info(message, *args, extra=extra)
 
 
+class _SafeProxyLogger:
+    def __init__(self, proxy):
+        self.credentialed = urlsplit(proxy).username is not None
+
+    def debug(self, message):
+        pass
+
+    def warning(self, message):
+        logger.warning('YouTube proxy warning' if self.credentialed else public_download_error(message))
+
+    def error(self, message):
+        logger.error('YouTube proxy request failed' if self.credentialed else public_download_error(message))
+
+
 def base_proxy_params(task_id: Optional[str] = None, video_id: Optional[str] = None, config=None,
                       *, session_id: Optional[str] = None,
                       country: Optional[str] = None) -> dict[str, Any]:
@@ -431,8 +446,9 @@ def base_proxy_params(task_id: Optional[str] = None, video_id: Optional[str] = N
     country = normalize_country(
         (connection.country if connection else getattr(runtime, "youtube_proxy_country", "")) if country is None else country
     )
+    template = connection.url if connection else (runtime.youtube_proxy_url if registry is None else '')
     params: dict[str, Any] = {
-        "proxy": render_proxy_url(connection.url if connection else runtime.youtube_proxy_url, session, country),
+        "proxy": render_proxy_url(template, session, country) if template else '',
         # yt-dlp treats 0.0.0.0 as "force IPv4" (the -4 flag).
         "source_address": "0.0.0.0",
         "socket_timeout": 30,
@@ -451,6 +467,7 @@ def base_proxy_params(task_id: Optional[str] = None, video_id: Optional[str] = N
             "Accept-Language": "en-US,en;q=0.9",
         },
     }
+    params['logger'] = _SafeProxyLogger(params['proxy'])
     pot_url = (getattr(runtime, "youtube_pot_provider_url", "") or "").strip()
     if pot_url:
         params["extractor_args"] = {
@@ -581,6 +598,11 @@ def _with_single_proxy_retry(operation: Callable, *, task_id: Optional[str], vid
     that attempt's session. Completed sections outside this operation are kept.
     """
     runtime = trial_config(get_config())
+    from .proxies.routing import current
+    held = current('imports')
+    if held:
+        runtime = copy.copy(runtime)
+        runtime.youtube_proxy_url, runtime.youtube_proxy_country = held.url, held.country
     initial_seconds = max(30, getattr(runtime, "youtube_proxy_timeout_seconds", 300))
     overall_deadline = time.monotonic() + initial_seconds + 60
     if deadline is not None:

@@ -74,14 +74,6 @@ class Config:
         # Do not use the idle timeout as that cap.
         self.stream_download_max_seconds = self._get_int_env("STREAM_DOWNLOAD_MAX_SECONDS", 2400)
         self.youtube_proxy_country = self._get_runtime_setting("YOUTUBE_PROXY_COUNTRY") or ""
-        from .proxies import routing
-        registry = routing.snapshot()
-        if registry is not None:
-            held = routing.current('imports')
-            assigned = registry.assigned('imports')
-            selected = held or (routing.resolve(assigned[0]) if assigned else None)
-            self.youtube_proxy_url = (selected.url or '') if selected else ''
-            self.youtube_proxy_country = selected.country if selected else ''
         self.youtube_pot_provider_url = self._get_runtime_setting("YOUTUBE_POT_PROVIDER_URL") or ""
         self.youtube_download_max_bytes = self._get_int_env("YOUTUBE_DOWNLOAD_MAX_BYTES", 2_000_000_000)
         self.youtube_section_padding_seconds = self._get_float_env("YOUTUBE_SECTION_PADDING_SECONDS", 10.0)

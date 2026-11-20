@@ -152,3 +152,12 @@ def test_failover_does_not_extend_the_callers_deadline(managed, monkeypatch):
     with pytest.raises(download.YouTubeAccessBlockedError):
         download._with_proxy_retry(operation, task_id='t', video_id='v', budget=download.ByteBudget(10), cleanup=lambda: None, deadline=103)
     assert attempted == ['http://first.example:80']
+
+
+def test_library_diagnostics_do_not_expose_a_credentialed_endpoint(managed, caplog):
+    from src.youtube_proxy import base_proxy_params
+    save, rows = managed
+    save([replace(rows[0], url='socks5h://api-user:private-password@proxy.example:1080')])
+    options = base_proxy_params('task', 'video')
+    options['logger'].warning('Proxy failure socks5h://api-user:private-password@proxy.example:1080 private-password')
+    assert 'private-password' not in caplog.text and 'api-user' not in caplog.text

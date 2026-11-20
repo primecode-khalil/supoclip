@@ -243,7 +243,10 @@ class ChannelRunner:
                 backlog = await self._backlog()
                 available = free >= self.settings.min_free_bytes and backlog < self.settings.max_backlog
                 if self.capture and (not self.capture.running or self.capture.stalled or not available):
+                    stopped, was_stalled = self.capture, self.capture.stalled
                     await self._stop_capture()
+                    if available and hasattr(stopped, 'report_connection_failure'):
+                        await stopped.report_connection_failure(stalled=was_stalled)
                     self.failures += 1
                     self.next_probe = time.monotonic() + min(60, retry_delay(self.failures - 1))
                 if not available:
@@ -256,7 +259,8 @@ class ChannelRunner:
                         atomic_json(epoch / "epoch.json", {"session_id": session.id, "epoch": epoch.name,
                             "policy": self.channel.policy.model_dump(), "fence": self.token.fence})
                         capture = CaptureProcess(epoch / "segments", self.channel.url, self.channel.quality,
-                            segment_seconds=self.channel.policy.segment_seconds)
+                            segment_seconds=self.channel.policy.segment_seconds,
+                            **({'proxy_key': result.proxy_key} if result.proxy_key else {}))
                         self.capture, self.capture_epoch = capture, epoch
                         self.readers[epoch] = capture
                         await capture.start()
@@ -279,8 +283,12 @@ class ChannelRunner:
                         # A reconnected Mac must resume live monitoring promptly.
                         # The longer upload/publishing retry policy is separate.
                         self.next_probe = time.monotonic() + min(60, retry_delay(self.failures - 1))
-                        message = ("YouTube rejected this connection. Connect your Mac in Home connection; existing media is retained."
-                                   if result.detail == 'youtube_access_blocked' else "Stream availability is unknown; retrying without deleting media")
+                        if result.detail == 'youtube_access_blocked':
+                            message = "YouTube rejected this connection. Check your connections in Proxy; existing media is retained."
+                        elif result.detail == 'proxy_pool_unavailable':
+                            message = "Assigned proxies are unavailable. Check Proxy connections; monitoring will retry and existing media is retained."
+                        else:
+                            message = "Stream availability is unknown; retrying without deleting media"
                         await store_call("report_error", self.token, message)
                 await asyncio.sleep(5)
         finally:

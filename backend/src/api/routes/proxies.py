@@ -63,6 +63,11 @@ class OrderInput(BaseModel):
     connection_ids: list[str] = Field(max_length=MAX_URL_CONNECTIONS + 1)
 
 
+class TestInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    video_url: str = Field(default='https://www.youtube.com/watch?v=BaW_jenozKc', max_length=2048)
+
+
 async def _body(request, model):
     content = bytearray()
     async for chunk in request.stream():
@@ -201,3 +206,37 @@ async def remove_connection(identity: str, request: Request, db: AsyncSession = 
     await refresh_home_proxy(db)
     await db.rollback()
     return await _payload(registry)
+
+
+@router.post('/connections/{identity}/test')
+async def test_connection(identity: str, request: Request, db: AsyncSession = Depends(get_db)):
+    user = await require_admin_user(request, db, get_config())
+    body = await _body(request, TestInput)
+    from ...youtube_utils import get_youtube_video_id
+    video_id = get_youtube_video_id(body.video_url)
+    if not video_id:
+        raise HTTPException(400, 'Enter a YouTube video link to test.')
+    registry = await _read(db, user)
+    connection = routing.resolve(_find(registry, identity))
+    if not connection.url:
+        raise HTTPException(409, 'This connection is unavailable. Connect the Mac or update the endpoint.')
+    from ...youtube_proxy import render_proxy_url
+    from ...proxies.probe import check
+    proxy = render_proxy_url(connection.url, 'proxycheck', connection.country)
+    result = await check(f'https://www.youtube.com/watch?v={video_id}', proxy)
+    latest = await _read(db, user)
+    current = _find(latest, identity)
+    if current.revision != connection.revision:
+        raise HTTPException(409, 'The connection changed while testing. Test its current settings again.')
+    purpose = 'live' if current.usage == 'live' else 'imports'
+    if result['ok']:
+        await asyncio.to_thread(health.success, connection, purpose, result='reachable')
+        message = 'YouTube metadata reached. Playback is checked when content is downloaded.'
+    else:
+        if result['reason'] in {'access', 'transport', 'authentication'}:
+            await asyncio.to_thread(health.failure, connection, purpose, result['reason'])
+        message = {'access': 'YouTube rejected this connection. Try another proxy.',
+                   'authentication': 'The proxy rejected its credentials. Edit the saved endpoint.',
+                   'transport': 'The proxy could not reach YouTube. Check the connection and try again.',
+                   'source_unavailable': 'This test video could not be read. Try another YouTube video link.'}[result['reason']]
+    return JSONResponse({'ok': result['ok'], 'message': message}, headers={'Cache-Control': 'no-store'})

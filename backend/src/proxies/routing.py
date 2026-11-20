@@ -53,6 +53,17 @@ def still_assigned(connection: Connection, purpose: str) -> bool:
         c.key == connection.key for c in registry.assigned(purpose))
 
 
+def by_key(purpose: str, key: str) -> Connection:
+    registry = snapshot()
+    if registry is not None and not registry.unavailable:
+        for connection in registry.assigned(purpose):
+            if connection.key == key:
+                resolved = resolve(connection)
+                if resolved.url:
+                    return resolved
+    raise ProxyUnavailableError()
+
+
 def retry_decision(exc: BaseException) -> tuple[bool, str | None]:
     """Source-specific rejection can try another route without a shared penalty."""
     import errno
@@ -63,16 +74,18 @@ def retry_decision(exc: BaseException) -> tuple[bool, str | None]:
         DownloadBudgetExceeded, PartialDownloadUnavailable,
     )
     errors = list(_exception_chain(exc))
+    messages = ' '.join(str(e).lower() for e in errors)
     if any(isinstance(e, (DownloadBudgetExceeded, PartialDownloadUnavailable)) for e in errors) or is_age_restricted_error(exc):
+        return False, None
+    if any(term in messages for term in ('private video', 'members-only', 'video has been removed', 'video is unavailable')):
         return False, None
     if is_access_blocked_error(exc):
         return True, 'access'
-    messages = ' '.join(str(e).lower() for e in errors)
-    if '407' in messages or 'proxy authentication' in messages:
+    if 'http error 407' in messages or 'proxy authentication' in messages or ('socks' in messages and 'authentication' in messages):
         return True, 'authentication'
     if 'http error 429' in messages or 'http error 502' in messages or 'http error 503' in messages or 'http error 504' in messages:
         return True, 'transport'
-    if is_transient_proxy_error(exc) or any(isinstance(e, socket.gaierror) or (
+    if is_transient_proxy_error(exc) or any(term in messages for term in ('certificate verify failed', 'failed to resolve', 'name or service not known')) or any(isinstance(e, socket.gaierror) or (
             isinstance(e, OSError) and e.errno in {errno.ECONNREFUSED, errno.ECONNRESET, errno.ENETUNREACH,
                                                 errno.EHOSTUNREACH, errno.ETIMEDOUT, errno.ECONNABORTED}) for e in errors):
         return True, 'transport'

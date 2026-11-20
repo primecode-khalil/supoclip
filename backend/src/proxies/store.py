@@ -35,7 +35,7 @@ async def _bootstrap(db) -> Registry:
         except ValueError:
             url = None  # Preserve routing intent; the owner can repair this entry.
         country = (Config._get_runtime_setting('YOUTUBE_PROXY_COUNTRY') or '').lower()
-        if len(country) != 2 or not country.isalpha():
+        if len(country) != 2 or not country.isascii() or not country.isalpha():
             country = ''
         connections.append(Connection(uuid4().hex, 'Saved proxy', url, priority=len(connections), country=country, revision=uuid4().hex))
     return Registry(tuple(connections))
