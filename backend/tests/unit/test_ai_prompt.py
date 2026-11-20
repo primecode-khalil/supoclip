@@ -172,17 +172,20 @@ def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def test_prompts_without_instructions_are_byte_identical_to_before_workflows():
-    # Hashes of the prompts as built before instructions existed (invariant I1).
-    assert _sha(build_transcript_analysis_prompt(transcript=GOLDEN_TRANSCRIPT)) == (
+def test_unsteered_prompts_preserve_the_baseline_except_the_requested_tag_field():
+    # Keep the pre-workflow golden bytes (invariant I1), allowing only the
+    # intentional YouTube-tag schema extension. Reranking remains unchanged.
+    plain = build_transcript_analysis_prompt(transcript=GOLDEN_TRANSCRIPT)
+    assert plain.count(', "youtube_tags"') == 1
+    assert _sha(plain.replace(', "youtube_tags"', '')) == (
         "5bb0569392010fae1b4649912ce1f22e15bb5a39f3d26d7abe52b871f51d43cb"
     )
-    assert _sha(
-        build_transcript_analysis_prompt(
+    signalled = build_transcript_analysis_prompt(
             transcript=GOLDEN_TRANSCRIPT, clip_signals="- [00:03 - 00:05] laugh", window=(0, 720),
             performance_context="hook_type question wins", clip_length="short", instructions=None,
-        )
-    ) == "f4aed4bf309e08ed8beeb6a111793d4ec5f55aeb1644349758fddfc5f96eb337"
+    )
+    assert signalled.count(', "youtube_tags"') == 1
+    assert _sha(signalled.replace(', "youtube_tags"', '')) == "f4aed4bf309e08ed8beeb6a111793d4ec5f55aeb1644349758fddfc5f96eb337"
     assert _sha(build_candidate_rerank_prompt(_golden_candidates())) == (
         "dbc69a7497e6093a8590e8abb3d92a81de31131534c70eb7a269f792c9194a8c"
     )
