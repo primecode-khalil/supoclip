@@ -220,7 +220,8 @@ class ByteBudget:
         self.total = 0
         self._lock = threading.Lock()
         # Recovery belongs to this job, never to the process-wide configuration.
-        self._proxy_routes: dict[tuple[Optional[str], str], tuple[str, str]] = {}
+        self._proxy_routes: dict[tuple[Optional[str], str, str], tuple[str, str]] = {}
+        self._preferred_connections: dict[tuple[Optional[str], str], str] = {}
 
     def add(self, nbytes: int) -> None:
         if nbytes <= 0:
@@ -238,16 +239,32 @@ class ByteBudget:
             return self.total
 
     def proxy_route(self, task_id: Optional[str], video_id: str) -> Optional[tuple[str, str]]:
+        from .proxies.routing import current
+        connection = current('imports')
         with self._lock:
-            return self._proxy_routes.get((task_id, video_id))
+            return self._proxy_routes.get((task_id, video_id, connection.key if connection else ''))
 
     def remember_proxy_route(self, task_id: Optional[str], video_id: str,
                              country: str, session: str) -> None:
+        from .proxies.routing import current
+        connection = current('imports')
         with self._lock:
-            self._proxy_routes[(task_id, video_id)] = (country, session)
+            self._proxy_routes[(task_id, video_id, connection.key if connection else '')] = (country, session)
+
+    def preferred_connection(self, task_id: Optional[str], video_id: str) -> Optional[str]:
+        with self._lock:
+            return self._preferred_connections.get((task_id, video_id))
+
+    def remember_connection(self, task_id: Optional[str], video_id: str, key: str) -> None:
+        with self._lock:
+            self._preferred_connections[(task_id, video_id)] = key
 
 
 def proxy_configured(config=None) -> bool:
+    from .proxies.routing import snapshot
+    registry = snapshot()
+    if registry is not None:
+        return registry.required('imports')
     runtime = trial_config(config or get_config())
     return bool((getattr(runtime, "youtube_proxy_url", "") or "").strip())
 
@@ -403,11 +420,19 @@ def base_proxy_params(task_id: Optional[str] = None, video_id: Optional[str] = N
     """
     runtime = trial_config(config or get_config())
     session = session_id or sticky_session_id(task_id, video_id)
+    from .proxies import routing
+    registry = routing.snapshot()
+    connection = routing.current('imports')
+    if registry is not None and registry.required('imports') and connection is None:
+        options = routing.candidates('imports')
+        if not options:
+            raise routing.ProxyUnavailableError()
+        connection = options[0]
     country = normalize_country(
-        getattr(runtime, "youtube_proxy_country", "") if country is None else country
+        (connection.country if connection else getattr(runtime, "youtube_proxy_country", "")) if country is None else country
     )
     params: dict[str, Any] = {
-        "proxy": render_proxy_url(runtime.youtube_proxy_url, session, country),
+        "proxy": render_proxy_url(connection.url if connection else runtime.youtube_proxy_url, session, country),
         # yt-dlp treats 0.0.0.0 as "force IPv4" (the -4 flag).
         "source_address": "0.0.0.0",
         "socket_timeout": 30,
@@ -515,6 +540,41 @@ def is_transient_proxy_error(exc: BaseException) -> bool:
 def _with_proxy_retry(operation: Callable, *, task_id: Optional[str], video_id: str,
                       budget: ByteBudget, cleanup: Callable[[], None],
                       deadline: Optional[float] = None):
+    from .proxies import routing, health
+    registry = routing.snapshot()
+    kwargs = dict(task_id=task_id, video_id=video_id, budget=budget, cleanup=cleanup, deadline=deadline)
+    if registry is None or not registry.required('imports'):
+        return _with_single_proxy_retry(operation, **kwargs)
+    seconds = max(30, getattr(get_config(), 'youtube_proxy_timeout_seconds', 300)) + 60
+    end = min(deadline, time.monotonic() + seconds) if deadline is not None else time.monotonic() + seconds
+    options = routing.candidates('imports', budget.preferred_connection(task_id, video_id))
+    last_error = None
+    for connection in options:
+        if time.monotonic() >= end or not routing.still_assigned(connection, 'imports'):
+            continue
+        try:
+            with routing.using(connection, 'imports'):
+                result = _with_single_proxy_retry(operation, **{**kwargs, 'deadline': end})
+            budget.remember_connection(task_id, video_id, connection.key)
+            health.success(connection, 'imports')
+            return result
+        except Exception as exc:
+            retry, reason = routing.retry_decision(exc)
+            if not retry:
+                raise
+            if reason:
+                health.failure(connection, 'imports', reason)
+            last_error = exc
+            report_download_recovery(DownloadRecovery.CONNECTION)
+            logger.info('proxy_failover connection_id=%s purpose=imports reason=%s', connection.id, reason or 'source_rejected')
+    if last_error is not None:
+        raise last_error
+    raise routing.ProxyUnavailableError()
+
+
+def _with_single_proxy_retry(operation: Callable, *, task_id: Optional[str], video_id: str,
+                             budget: ByteBudget, cleanup: Callable[[], None],
+                             deadline: Optional[float] = None):
     """One transport and one region retry stay inside the initial budget plus 60s.
 
     Each attempt re-extracts metadata, keeping signed URLs and all fragments on

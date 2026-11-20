@@ -47,6 +47,40 @@ def current(purpose: str) -> Connection | None:
     return held[1] if held and held[0] == purpose else None
 
 
+def still_assigned(connection: Connection, purpose: str) -> bool:
+    registry = snapshot()
+    return registry is not None and not registry.unavailable and any(
+        c.key == connection.key for c in registry.assigned(purpose))
+
+
+def retry_decision(exc: BaseException) -> tuple[bool, str | None]:
+    """Source-specific rejection can try another route without a shared penalty."""
+    import errno
+    import socket
+    from ..youtube_proxy import (
+        _exception_chain, is_access_blocked_error, is_age_restricted_error,
+        is_geo_restricted_error, is_transient_proxy_error,
+        DownloadBudgetExceeded, PartialDownloadUnavailable,
+    )
+    errors = list(_exception_chain(exc))
+    if any(isinstance(e, (DownloadBudgetExceeded, PartialDownloadUnavailable)) for e in errors) or is_age_restricted_error(exc):
+        return False, None
+    if is_access_blocked_error(exc):
+        return True, 'access'
+    messages = ' '.join(str(e).lower() for e in errors)
+    if '407' in messages or 'proxy authentication' in messages:
+        return True, 'authentication'
+    if 'http error 429' in messages or 'http error 502' in messages or 'http error 503' in messages or 'http error 504' in messages:
+        return True, 'transport'
+    if is_transient_proxy_error(exc) or any(isinstance(e, socket.gaierror) or (
+            isinstance(e, OSError) and e.errno in {errno.ECONNREFUSED, errno.ECONNRESET, errno.ENETUNREACH,
+                                                errno.EHOSTUNREACH, errno.ETIMEDOUT, errno.ECONNABORTED}) for e in errors):
+        return True, 'transport'
+    if is_geo_restricted_error(exc) or 'http error 403' in messages:
+        return True, None
+    return False, None
+
+
 @contextmanager
 def using(connection: Connection, purpose: str):
     token = _current.set((purpose, connection))

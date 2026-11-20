@@ -89,6 +89,9 @@ def _record(route, event, **values):
 
 
 def trial_config(config):
+    from .proxies.routing import snapshot
+    if snapshot() is not None:
+        return config
     route = _route.get()
     if route is None or (_provider.get() or route.active) != "geonode":
         return config
@@ -114,6 +117,9 @@ def trial_log(function):
 def trial_retry(function):
     @functools.wraps(function)
     def wrapped(operation, **kwargs):
+        from .proxies.routing import snapshot
+        if snapshot() is not None:
+            return function(operation, **kwargs)
         route = _route.get()
         if route is None:
             if os.environ.get("YOUTUBE_PROXY_DEFAULT_PROVIDER") not in {"geonode", "dataimpulse"}:
