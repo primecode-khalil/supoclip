@@ -29,14 +29,14 @@ export function HomeProxyCard() {
 
   return <section aria-labelledby={titleId} className="mb-6 min-w-0 rounded-xl border bg-background p-4 sm:p-5">
     <div className="flex flex-wrap items-start justify-between gap-3">
-      <div className="min-w-0"><h2 id={titleId} className="flex items-center gap-2 text-sm font-semibold"><House className="size-4 text-muted-foreground" aria-hidden="true" />Home connection</h2><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Use your Mac’s internet connection for YouTube recording.</p></div>
+      <div className="min-w-0"><h2 id={titleId} className="flex items-center gap-2 text-sm font-semibold"><House className="size-4 text-muted-foreground" aria-hidden="true" />Mac home connection</h2><p className="mt-1 text-xs leading-relaxed text-muted-foreground">Use your Mac’s internet connection as a saved proxy for YouTube imports and live streams.</p></div>
       <Badge role="status" variant="outline" className="max-w-full whitespace-normal text-xs">{label}</Badge>
     </div>
     <div className="mt-3 space-y-2 text-xs leading-relaxed text-muted-foreground">
       {!status ? <p>{checking && !error ? "Checking your Mac connection." : "Check again to see whether your Mac is connected."}</p>
         : !status.available ? <p>The home connection is not configured on this server. Finish the server setup, then check again.</p>
-          : status.paired ? <p>{status.connected ? `Tunnel connected to ${status.device_name || "your Mac"}. YouTube access has not been verified.` : `${status.device_name || "Your Mac"} is offline. Waiting for its tunnel to reconnect.`}</p>
-            : <p>Connect a Mac once to send recording traffic through your home internet.</p>}
+          : status.paired ? <p>{status.connected ? `Tunnel connected to ${status.device_name || "your Mac"}. Use Test YouTube in the saved connection to check access.` : `${status.device_name || "Your Mac"} is offline. Waiting for its tunnel to reconnect.`}</p>
+            : <p>Connect a Mac once, then choose its purpose and priority in the saved connections.</p>}
       <p>Keep your Mac awake and connected to the internet. No VPN or router changes are needed.</p>
       <p>Files are not stored on your Mac. Recording, clipping, and publishing run on your server.</p>
     </div>

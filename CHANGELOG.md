@@ -6,6 +6,8 @@ Add a line here when a pull request changes something a user can see. Use **New*
 
 ## 2026-11-20
 
+- **New:** Manage YouTube connections in a separate Proxy page. Keep the paired Mac and save multiple proxy endpoints, choose live streams, video imports or both, set priority and test access. Connection failures try another eligible proxy while shared limits and saved recordings are retained. ([#3](https://github.com/primecode-khalil/supoclip/pull/3))
+
 - **Improved:** New clips get a small set of AI-suggested YouTube tags checked against their final transcript. Edit or clear tags before approving a Short; approved tags stay attached to its upload through retries. Tags stay separate from description hashtags. Older clips can be tagged manually without paying to regenerate them. ([#2](https://github.com/primecode-khalil/supoclip/pull/2))
 
 ## 2026-11-19

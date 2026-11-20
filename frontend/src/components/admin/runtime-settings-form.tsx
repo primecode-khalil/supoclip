@@ -6,6 +6,7 @@ import { useTranslations } from "next-intl";
 import { Save, Trash2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import Link from "next/link";
 
 export type RuntimeSetting = {
   key: string;
@@ -35,7 +36,8 @@ function sourceBadge(setting: RuntimeSetting, t: (key: string) => string) {
   return <Badge variant="outline">{t("runtime.unset")}</Badge>;
 }
 
-export function RuntimeSettingsForm({ settings }: RuntimeSettingsFormProps) {
+export function RuntimeSettingsForm({ settings: suppliedSettings }: RuntimeSettingsFormProps) {
+  const settings = useMemo(() => suppliedSettings.filter(s => !['YOUTUBE_PROXY_URL', 'YOUTUBE_PROXY_COUNTRY'].includes(s.key)), [suppliedSettings]);
   const t = useTranslations("admin");
   const router = useRouter();
   const [values, setValues] = useState<Record<string, string>>({});
@@ -116,6 +118,7 @@ export function RuntimeSettingsForm({ settings }: RuntimeSettingsFormProps) {
 
   return (
     <form onSubmit={handleSubmit}>
+      <p className="mb-4 text-sm text-muted-foreground">Manage YouTube home connections and proxy failover in <Link href="/proxy" className="font-medium underline underline-offset-4">Proxy</Link>.</p>
       <div className="divide-y">
         {settings.map((setting) => (
           <div
