@@ -65,7 +65,7 @@ class OrderInput(BaseModel):
 
 class TestInput(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
-    video_url: str = Field(default='https://www.youtube.com/watch?v=BaW_jenozKc', max_length=2048)
+    video_url: str = Field(default='https://www.youtube.com/watch?v=jNQXAC9IVRw', max_length=2048)
 
 
 async def _body(request, model):

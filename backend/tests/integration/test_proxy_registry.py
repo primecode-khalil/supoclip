@@ -152,7 +152,7 @@ async def test_connection_test_hides_credentials_and_records_only_a_current_resu
     assert response.status_code == 200, response.text
     assert response.json()['ok'] is True and 'private-password' not in response.text
     assert received[0]['proxy'] == 'http://user:private-password@proxy.example:8000'
-    assert received[0]['url'].startswith('https://www.youtube.com/watch?v=')
+    assert received[0]['url'] == 'https://www.youtube.com/watch?v=jNQXAC9IVRw'
     bad = await client.post(f"/proxy/connections/{item['id']}/test", headers=admin,
         json={'video_url': 'http://127.0.0.1/private'})
     assert bad.status_code == 400 and len(received) == 1
