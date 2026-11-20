@@ -731,6 +731,9 @@ def _download_youtube_video_with_ytdlp(
 
 def _provider_order(config, *, skip_proxy: bool) -> list[str]:
     """Proxy, API Router, bounded Apify pool, then direct yt-dlp."""
+    from .proxies.routing import configured
+    if configured('imports'):
+        return [YOUTUBE_DOWNLOAD_PROVIDER_YTDLP_PROXY]
     order: list[str] = []
     if proxy_configured(config) and not skip_proxy:
         order.append(YOUTUBE_DOWNLOAD_PROVIDER_YTDLP_PROXY)

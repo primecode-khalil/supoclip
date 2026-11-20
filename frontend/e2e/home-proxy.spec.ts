@@ -28,6 +28,7 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/api/social/providers", (route) => route.fulfill({ json: { enabled: true, providers: [] } }));
   await page.route("**/api/social/connections", (route) => route.fulfill({ json: { connections: [] } }));
   await page.route("**/api/recording/channels?*", (route) => route.fulfill({ json: { channels: [], total: 0 } }));
+  await page.route("**/api/proxy", route => route.fulfill({ json: { connections: [], max_url_connections: 10 } }));
   await page.route("**/api/recording/home-proxy", (route) => route.fulfill({ json: status }));
   await page.route("**/api/recording/home-proxy/setup", (route) => {
     expect(route.request().method()).toBe("POST");
@@ -60,8 +61,8 @@ async function finishVideo(page: Page, name: string, testInfo: TestInfo) {
 
 test("sets up a Mac, copies the command, polls pairing, and disconnects", async ({ page }, testInfo) => {
   await page.clock.install();
-  await page.goto("/recording");
-  const card = page.getByRole("region", { name: "Home connection" });
+  await page.goto("/proxy");
+  const card = page.getByRole("region", { name: "Mac home connection" });
   await expect(card.getByText("Not connected", { exact: true })).toBeVisible();
   await showState(page);
   await expect(card.getByRole("textbox", { name: "Mac setup command" })).toHaveCount(0);
@@ -85,7 +86,7 @@ test("sets up a Mac, copies the command, polls pairing, and disconnects", async 
   status.connected = true;
   await page.clock.fastForward(15_000);
   await expect(card.getByText("Connected", { exact: true })).toBeVisible();
-  await expect(card.getByText(/YouTube access has not been verified/)).toBeVisible();
+  await expect(card.getByText(/Use Test YouTube/)).toBeVisible();
   await page.screenshot({ path: await artifact("desktop-connected.png", testInfo), fullPage: true });
   await showState(page);
   await card.getByRole("button", { name: "Disconnect Mac" }).click();
@@ -101,8 +102,8 @@ test.describe("mobile", () => {
   test.use({ viewport: { width: 320, height: 850 } });
 
   test("keeps setup and connected controls usable at 320 pixels", async ({ page }, testInfo) => {
-  await page.goto("/recording");
-  const card = page.getByRole("region", { name: "Home connection" });
+  await page.goto("/proxy");
+  const card = page.getByRole("region", { name: "Mac home connection" });
   await card.getByRole("button", { name: "Set up my Mac" }).click();
   const command = card.getByRole("textbox", { name: "Mac setup command" });
   await expect(command).toHaveValue(demoCommand);

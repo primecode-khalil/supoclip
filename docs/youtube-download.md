@@ -1,6 +1,6 @@
 # YouTube download runbook
 
-SupoClip can download YouTube media with `yt-dlp` through a residential proxy, then keep that media so later edits do not fetch it again. The proxy path is off until `YOUTUBE_PROXY_URL` is set. A datacenter IP (the production host is in this situation) gets YouTube's "Sign in to confirm you're not a bot" page from plain `yt-dlp`.
+SupoClip can download YouTube media with `yt-dlp` through a residential proxy, then keep that media so later edits do not fetch it again. Configure connections in the administrator's [Proxy dashboard](proxy.md). Before the first visit, `YOUTUBE_PROXY_URL` remains the legacy bootstrap setting. A datacenter IP (the production host is in this situation) gets YouTube's "Sign in to confirm you're not a bot" page from plain `yt-dlp`.
 
 ## What a configured job does
 
@@ -10,7 +10,7 @@ SupoClip can download YouTube media with `yt-dlp` through a residential proxy, t
 4. Audio and sections land in `{TEMP_DIR}/youtube-cache/{video_id}/`. Regenerating clips, editing captions, and opening the editor reuse that cache. A new section is fetched only when an edit extends past the cached ranges.
 5. Each attempt logs `youtube_provider`, `youtube_video_id`, `youtube_download_kind`, `youtube_outcome`, `youtube_bytes`, and `task_id`. A successful HLS or full-timeline section retry also sets `youtube_fallback` to `hls_audio` or `section`. Axiom can sum bytes per provider. Proxy URLs and signed media URLs are redacted.
 
-When the modest https audio download fails with HTTP 403 or yt-dlp's "unable to download video data" error, the job retries once with an HLS audio format already present in that info response: audio-only `m3u8` / `m3u8_native`, or the lowest muxed HLS rendition at or below the height cap when no audio-only HLS exists. If that also fails and the duration is known, it asks the section downloader for the full timeline (that path prefers timed HLS). Only then does it use the existing chain. With a proxy configured, this audio failure still skips a second full-file proxy attempt and continues to API Router, then Apify, then direct yt-dlp. A byte-budget failure stops the job. Non-transient audio errors, including a bot-check, go straight to that chain. The first audio attempt is unchanged when https audio works.
+When the modest https audio download fails with HTTP 403 or yt-dlp's "unable to download video data" error, the job retries once with an HLS audio format already present in that info response: audio-only `m3u8` / `m3u8_native`, or the lowest muxed HLS rendition at or below the height cap when no audio-only HLS exists. If that also fails and the duration is known, it asks the section downloader for the full timeline (that path prefers timed HLS). Only then does it use the existing chain. In legacy proxy mode, this audio failure skips a second full-file proxy attempt and continues to API Router, then Apify, then direct yt-dlp. Managed Proxy connections instead remain within the assigned pool. A byte-budget failure stops the job. Non-transient audio errors, including a bot-check, go straight to that chain. The first audio attempt is unchanged when https audio works.
 
 The HLS retry does not pass a format string such as `bestaudio[protocol^=m3u8]`. A format string can make yt-dlp hand the playlist to ffmpeg, which would leave from the server IP. The retry selects one format and downloads it with the native client. Player clients stay at yt-dlp defaults, so an info response that listed no HLS formats cannot be repaired here. `--download-sections` is still not used.
 
@@ -33,9 +33,9 @@ This uses additional local CPU for the selected ranges. Cache manifests mark
 the original-audio selection policy; older audio and section entries are
 regenerated, while an existing full source remains available.
 
-If a format cannot be sliced, the job tries a bounded full 1080p download through the proxy. A proxy network failure skips that repeat attempt. With a proxy configured, the fallback order is always **proxy → API Router → Apify primary (Titan in production) → configured emergency actors → direct yt-dlp**, regardless of the legacy primary-provider setting. `APIFY_EXPENSIVE_FALLBACKS` defaults to `false`, so only the primary Apify actor runs. Production explicitly enables Marielise then Scraper One with a shared $1 Apify budget and a $0.50 per-actor ceiling (Titan keeps its smaller $0.03 cap). The spending allowance is shared, not reset between actors. Leave high-cap actors (marielise.dev, scraper_one, dami_studio, and anything else with a multi-dollar run cap) out of `APIFY_YOUTUBE_FALLBACK_ACTORS` unless that flag is `true`. Actor ids stay in private environment configuration.
+If a format cannot be sliced, the job tries a bounded full 1080p download through the proxy. A proxy network failure skips that repeat attempt. Before adopting the managed Proxy registry, the legacy fallback order with a proxy is **proxy → API Router → Apify primary (Titan in production) → configured emergency actors → direct yt-dlp**, regardless of the legacy primary-provider setting. `APIFY_EXPENSIVE_FALLBACKS` defaults to `false`, so only the primary Apify actor runs. Production explicitly enables Marielise then Scraper One with a shared $1 Apify budget and a $0.50 per-actor ceiling (Titan keeps its smaller $0.03 cap). The spending allowance is shared, not reset between actors. Leave high-cap actors (marielise.dev, scraper_one, dami_studio, and anything else with a multi-dollar run cap) out of `APIFY_YOUTUBE_FALLBACK_ACTORS` unless that flag is `true`. Actor ids stay in private environment configuration.
 
-Proxy attempts and API Router default to 300 seconds each (`YOUTUBE_PROXY_TIMEOUT_SECONDS` and `RAPIDAPI_YOUTUBE_TIMEOUT_SECONDS`). Proxy socket requests and progress checks honor the attempt deadline. One transport retry and one allowed-region retry are permitted, within an overall limit of the initial timeout plus 60 seconds. A region retry can use the remaining overall allowance; it is not limited to a new 60-second transfer. Once retries are exhausted, independent providers can take over. Full-file proxy attempts use private temporary directories so cleanup cannot remove another job's media or a saved transcript. Production actor run timeouts are 300 seconds, with a separate bounded allowance for file transfer and verification. The worker job deadline is independent of actor deadlines.
+Proxy attempts and API Router default to 300 seconds each (`YOUTUBE_PROXY_TIMEOUT_SECONDS` and `RAPIDAPI_YOUTUBE_TIMEOUT_SECONDS`). Proxy socket requests and progress checks honor the attempt deadline. One transport retry and one allowed-region retry are permitted, within an overall limit of the initial timeout plus 60 seconds. A region retry can use the remaining overall allowance; it is not limited to a new 60-second transfer. Once retries are exhausted, independent providers can take over only in legacy/unassigned routing; managed connections do not bypass their assigned pool. Full-file proxy attempts use private temporary directories so cleanup cannot remove another job's media or a saved transcript. Production actor run timeouts are 300 seconds, with a separate bounded allowance for file transfer and verification. The worker job deadline is independent of actor deadlines.
 
 ## Generation recovery
 
@@ -75,6 +75,8 @@ including near the end of the long source. These are measured examples,
 not whole-hour bandwidth projections or a production rollout.
 
 ## Proxy
+
+Use the [Proxy dashboard](proxy.md) for new configuration. The environment examples below describe legacy bootstrap settings and endpoint templates. Once adopted, edit saved connections in Proxy. Managed routes try eligible proxies only; the provider fallback chain described below applies to the legacy/unassigned path.
 
 Use a provider that supports sticky sessions and HTTP proxies (DataImpulse is the reference at about $1/GB). Put the session and country in the URL template:
 
@@ -147,7 +149,7 @@ Use one short public video before pointing production at the proxy.
 
 1. Set the proxy URL (and the PO token URL if the sidecar is up) on a single worker, not the whole fleet.
 2. Submit that video and wait for clips.
-3. In Axiom, filter `youtube_provider` and `youtube_bytes`. Expect `yt_dlp_proxy` with `kind=audio` then `kind=section`, and a byte total near the table above for the video's length. `outcome=failure` with a bot-check in the message means the exit IP is burned; the job should continue to the next provider.
+3. In Axiom, filter `youtube_provider` and `youtube_bytes`. Expect `yt_dlp_proxy` with `kind=audio` then `kind=section`, and a byte total near the table above for the video's length. `outcome=failure` with a bot-check in the message means the exit IP is burned; a managed job may try another eligible proxy; legacy/unassigned jobs may continue to the next provider.
 4. Regenerate a clip or open the editor. The next lines should be `provider=cache` `outcome=cache_hit` `bytes=0`, or a section fetch only for a range that was not cached.
 5. Confirm captions still match speech. A shifted timeline that is wrong shows up as captions sliding off the words.
 

@@ -22,7 +22,13 @@ def probe(url, proxy=''):
         message = str(exc).lower()
         if any(term in message for term in ('not currently live', 'is not live', 'channel is offline')):
             return {'error': 'The channel is offline'}
-        return {'detail': 'youtube_access_blocked' if 'not a bot' in message else 'youtube_probe_unavailable'}
+        if 'not a bot' in message:
+            return {'detail': 'youtube_access_blocked'}
+        transport = ('timed out', 'connection refused', 'connection reset', 'proxy error',
+                     'tunnel connection failed', 'proxy authentication', 'http error 407',
+                     'http error 502', 'http error 503', 'http error 504', 'http error 429',
+                     'unable to connect', 'failed to resolve', 'name or service not known')
+        return {'detail': 'youtube_transport_failed' if any(term in message for term in transport) else 'youtube_probe_unavailable'}
 
 
 if __name__ == '__main__':

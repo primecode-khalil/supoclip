@@ -404,7 +404,10 @@ def test_fingerprint_hashes_the_canonical_fields():
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     assert spec.fingerprint() == hashlib.sha256(canonical.encode()).hexdigest()
     assert "calm" not in canonical
-    assert WORKFLOW_PLAN_VERSION == "wf-v1" and OUTLINE_VERSION == "outline-v2"
+    assert WORKFLOW_PLAN_VERSION == "wf-v2-tags" and OUTLINE_VERSION == "outline-v2"
+    # Tag-aware plans must not reuse plans created before that metadata existed.
+    legacy = json.dumps({**payload, "version": "wf-v1"}, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    assert spec.fingerprint() != hashlib.sha256(legacy.encode()).hexdigest()
 
 
 # --- task rows ---------------------------------------------------------------------

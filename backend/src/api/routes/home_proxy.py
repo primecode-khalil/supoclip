@@ -258,7 +258,15 @@ async def pair_home_proxy(request: Request, db: AsyncSession = Depends(get_db)):
         "INSERT INTO home_proxy_devices (id,name,public_key) VALUES (:id,:name,:key)"
     ), {"id": str(uuid4()), "name": pairing["name"], "key": public_key})
     await db.execute(text("UPDATE home_proxy_pairings SET consumed_at=NOW() WHERE consumed_at IS NULL"))
+    from ...proxies import store as proxy_store
+    try:
+        registry = await proxy_store.paired_mac_changed(db)
+    except proxy_store.RegistryUnavailable as exc:
+        await db.rollback()
+        raise HTTPException(503, str(exc)) from None
     await db.commit()
+    if registry is not None:
+        proxy_store.publish(registry)
     await refresh_home_proxy(db)
     return _json({
         "ssh_host": settings.ssh_host, "ssh_port": settings.ssh_port,

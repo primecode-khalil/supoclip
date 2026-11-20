@@ -44,6 +44,7 @@ class ProbeState(str, Enum):
 class ProbeResult:
     state: ProbeState
     detail: str = ""
+    proxy_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -75,11 +76,21 @@ def streamlink_command() -> list[str]:
 def youtube_proxy() -> str:
     from ..config import get_config
     from ..youtube_proxy import render_proxy_url
-    value = get_config().youtube_proxy_url
-    return render_proxy_url(value, 'recording') if value else ''
+    from ..proxies import routing
+    registry = routing.snapshot()
+    if registry is not None:
+        if not registry.required('live'):
+            return ''
+        connections = routing.candidates('live')
+        if not connections:
+            raise routing.ProxyUnavailableError()
+        return render_proxy_url(connections[0].url, 'recording', connections[0].country)
+    config = get_config()
+    value = config.youtube_proxy_url
+    return render_proxy_url(value, 'recording', config.youtube_proxy_country) if value else ''
 
 
-def youtube_command(url: str, quality: str) -> list[str]:
+def youtube_command(url: str, quality: str, *, proxy_url: str | None = None) -> list[str]:
     match = re.search(r'(\d+)p', quality)
     height = min(2160, max(144, int(match[1]))) if match else 1080
     command = [sys.executable, '-m', 'yt_dlp', '--ignore-config', '--no-playlist',
@@ -89,7 +100,7 @@ def youtube_command(url: str, quality: str) -> list[str]:
                # their common broadcast clock when yt-dlp merges them to stdout.
                '--downloader-args', 'ffmpeg:-copyts',
                '-f', f'bv[height<={height}]+ba/b[height<={height}]']
-    proxy = youtube_proxy()
+    proxy = youtube_proxy() if proxy_url is None else proxy_url
     if proxy:
         command += ['--proxy', proxy]
     return command + [url, '-o', '-']
@@ -155,14 +166,19 @@ async def _terminate(
         await asyncio.wait_for(process.wait(), timeout=5)
 
 
-async def _read_json_command(argv: list[str], timeout: float) -> tuple[int, object]:
+async def _read_json_command(argv: list[str], timeout: float, *, input_data: bytes | None = None) -> tuple[int, object]:
     """Bound output and runtime; never expose stream URLs or child diagnostics."""
     process = await asyncio.create_subprocess_exec(
-        *argv, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
+        *argv, stdin=asyncio.subprocess.PIPE if input_data is not None else asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL, start_new_session=True, env=capture_environment(),
     )
 
     async def read_result():
+        if input_data is not None:
+            process.stdin.write(input_data)
+            await process.stdin.drain()
+            process.stdin.close()
+            await process.stdin.wait_closed()
         output = bytearray()
         while chunk := await process.stdout.read(65536):
             output.extend(chunk)
@@ -182,15 +198,44 @@ async def probe_channel(url: str, timeout: float = 30) -> ProbeResult:
     """A request failure is UNKNOWN, never evidence that a channel went offline."""
     source_url = _live_url(url)
     _positive_interval(timeout, "Probe timeout")
+    if urlsplit(source_url).hostname != 'www.youtube.com':
+        return await _probe_once(source_url, timeout)
+    from ..proxies import routing, health
+    from ..proxies.transport import async_gateway
+    from ..youtube_proxy import render_proxy_url
+    if not routing.configured('live'):
+        async with async_gateway(youtube_proxy()) as address:
+            return await _probe_once(source_url, timeout, address)
+    deadline = time.monotonic() + timeout
+    result = ProbeResult(ProbeState.UNKNOWN, 'proxy_pool_unavailable')
+    for connection in await asyncio.to_thread(routing.candidates, 'live'):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not routing.still_assigned(connection, 'live'):
+            continue
+        proxy = render_proxy_url(connection.url, 'recording', connection.country)
+        async with async_gateway(proxy) as address:
+            result = await _probe_once(source_url, remaining, address)
+        if result.state in {ProbeState.LIVE, ProbeState.OFFLINE}:
+            await asyncio.to_thread(health.success, connection, 'live', result='reachable')
+            return ProbeResult(result.state, result.detail, connection.key)
+        reason = ('access' if result.detail == 'youtube_access_blocked' else
+                  'transport' if result.detail in {'youtube_transport_failed', 'proxy_transport_failed'} else None)
+        if reason:
+            await asyncio.to_thread(health.failure, connection, 'live', reason)
+    return result
+
+
+async def _probe_once(source_url: str, timeout: float, proxy: str | None = None) -> ProbeResult:
+    youtube = urlsplit(source_url).hostname == 'www.youtube.com'
     try:
-        command = ([sys.executable, str(Path(__file__).with_name('youtube_probe.py')), source_url, youtube_proxy()]
-                   if urlsplit(source_url).hostname == 'www.youtube.com' else [*streamlink_command(), '--json', source_url])
+        command = ([sys.executable, str(Path(__file__).with_name('youtube_probe.py')), source_url, proxy if proxy is not None else youtube_proxy()]
+                   if youtube else [*streamlink_command(), '--json', source_url])
         code, payload = await _read_json_command(
             command,
             timeout,
         )
     except (OSError, ValueError, asyncio.TimeoutError):
-        return ProbeResult(ProbeState.UNKNOWN, "probe_unavailable")
+        return ProbeResult(ProbeState.UNKNOWN, 'proxy_transport_failed' if youtube and proxy else 'probe_unavailable')
     if not isinstance(payload, dict):
         return ProbeResult(ProbeState.UNKNOWN, "probe_invalid_response")
     streams = payload.get("streams")
@@ -235,6 +280,7 @@ class CaptureProcess:
         quality: str = "best",
         segment_seconds: int = 600,
         stall_seconds: float = 120,
+        proxy_key: str | None = None,
     ):
         self.directory = Path(directory).resolve()
         self.url = _live_url(url)
@@ -247,6 +293,10 @@ class CaptureProcess:
         self._last_progress = time.monotonic()
         self._last_size = 0
         self._stop_task: asyncio.Task | None = None
+        self.proxy_key = proxy_key
+        self._gateway = None
+        self._diagnostics: asyncio.Task | None = None
+        self._proxy_failure: str | None = None
 
     @property
     def running(self) -> bool:
@@ -274,8 +324,29 @@ class CaptureProcess:
         # so transcription timestamps still use the video's zero origin.
         codecs = (['-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k',
                    '-af', 'aresample=async=1:first_pts=0', '-shortest'] if youtube else ['-c', 'copy'])
-        read_descriptor, write_descriptor = os.pipe()
         try:
+            proxy_url = None
+            if youtube:
+                from ..proxies import routing
+                from ..proxies.transport import async_gateway
+                from ..youtube_proxy import render_proxy_url
+                if self.proxy_key:
+                    selected = routing.by_key('live', self.proxy_key)
+                elif routing.configured('live'):
+                    choices = await asyncio.to_thread(routing.candidates, 'live')
+                    if not choices:
+                        raise routing.ProxyUnavailableError()
+                    selected = choices[0]
+                else:
+                    selected = None
+                if selected:
+                    self.proxy_key = selected.key
+                    raw = render_proxy_url(selected.url, 'recording', selected.country)
+                else:
+                    raw = youtube_proxy()
+                self._gateway = async_gateway(raw)
+                proxy_url = await self._gateway.__aenter__()
+            read_descriptor, write_descriptor = os.pipe()
             # Parent copies close before cleanup runs, including partial-start
             # failures. Otherwise FFmpeg waits for EOF from our own write end.
             with os.fdopen(read_descriptor, "rb") as input_pipe, os.fdopen(write_descriptor, "wb") as output_pipe:
@@ -291,11 +362,14 @@ class CaptureProcess:
                     stderr=asyncio.subprocess.DEVNULL, cwd=self.directory, start_new_session=True, env=capture_environment(),
                 )
                 self._streamlink = await asyncio.create_subprocess_exec(
-                    *(youtube_command(self.url, self.quality) if youtube
+                    *(youtube_command(self.url, self.quality, proxy_url=proxy_url) if youtube
                       else [*streamlink_command(), '--stdout', self.url, self.quality]),
                     stdin=asyncio.subprocess.DEVNULL, stdout=output_pipe,
-                    stderr=asyncio.subprocess.DEVNULL, start_new_session=True, env=capture_environment(),
+                    stderr=asyncio.subprocess.PIPE if self.proxy_key else asyncio.subprocess.DEVNULL,
+                    start_new_session=True, env=capture_environment(),
                 )
+                if isinstance(getattr(self._streamlink, 'stderr', None), asyncio.StreamReader):
+                    self._diagnostics = asyncio.create_task(self._observe_errors(self._streamlink.stderr))
             self._last_progress = time.monotonic()
         except BaseException:
             await asyncio.shield(self.stop())
@@ -315,12 +389,41 @@ class CaptureProcess:
     async def _stop_owned(self) -> None:
         # Stop the producer first: EOF normally lets FFmpeg write the last trailer
         # and CSV row without truncating the useful final fragment.
-        await _terminate(self._streamlink)
-        if self._ffmpeg is not None and self._ffmpeg.returncode is None:
+        try:
+            await _terminate(self._streamlink)
+            if self._ffmpeg is not None and self._ffmpeg.returncode is None:
+                try:
+                    await asyncio.wait_for(self._ffmpeg.wait(), timeout=5)
+                except asyncio.TimeoutError:
+                    await _terminate(self._ffmpeg, signal.SIGINT)
+        finally:
+            if self._diagnostics:
+                try:
+                    await asyncio.wait_for(self._diagnostics, timeout=1)
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    self._diagnostics.cancel()
+                    await asyncio.gather(self._diagnostics, return_exceptions=True)
+            if self._gateway is not None:
+                gateway, self._gateway = self._gateway, None
+                await gateway.__aexit__(None, None, None)
+
+    async def _observe_errors(self, stream) -> None:
+        from ..proxies.routing import retry_decision
+        tail = ''
+        while data := await stream.read(4096):
+            tail = (tail + data.decode('utf-8', errors='replace'))[-4096:]
+            retry, reason = retry_decision(RuntimeError(tail))
+            if reason or (retry and 'http error 403' in tail.lower()):
+                self._proxy_failure = reason or 'access'
+
+    async def report_connection_failure(self, *, stalled: bool = False) -> None:
+        if self.proxy_key and (stalled or self._proxy_failure):
+            from ..proxies import health, routing
             try:
-                await asyncio.wait_for(self._ffmpeg.wait(), timeout=5)
-            except asyncio.TimeoutError:
-                await _terminate(self._ffmpeg, signal.SIGINT)
+                connection = routing.by_key('live', self.proxy_key)
+            except routing.ProxyUnavailableError:
+                return
+            await asyncio.to_thread(health.failure, connection, 'live', self._proxy_failure or 'transport')
 
     def _rows(self) -> list[list[str]]:
         manifest = self.directory / "segments.csv"

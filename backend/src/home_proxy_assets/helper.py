@@ -18,13 +18,18 @@ from urllib.parse import urlsplit
 DOMAINS = ('youtube.com', 'youtube-nocookie.com', 'googlevideo.com', 'ytimg.com', 'googleapis.com', 'gstatic.com', 'google.com', 'ggpht.com')
 
 
-def destination(authority):
+def authority_host(authority):
     parsed = urlsplit('//' + authority)
     host = (parsed.hostname or '').lower()
     if (parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment
             or parsed.port != 443 or not re.fullmatch(r'[a-z0-9.-]+', host)
             or not any(host == d or host.endswith('.' + d) for d in DOMAINS)):
         raise ValueError('Only public YouTube HTTPS destinations are allowed')
+    return host
+
+
+def destination(authority):
+    host = authority_host(authority)
     answers = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
     addresses = [entry[4][0] for entry in answers]
     if not addresses or any(not ipaddress.ip_address(ip).is_global for ip in addresses):
@@ -54,12 +59,15 @@ class ConnectHandler(socketserver.StreamRequestHandler):
                     raise ValueError('Invalid headers')
                 if header in (b'\r\n', b'\n'):
                     break
-            upstream = socket.create_connection(destination(authority), timeout=15)
+            upstream = self.server.open_tunnel(authority)
             self.connection.sendall(b'HTTP/1.1 200 Connection Established\r\n\r\n')
             self.connection.settimeout(30)
             upstream.settimeout(30)
             while True:
-                ready, _, _ = select.select([self.connection, upstream], [], [], 90)
+                pending = getattr(upstream, 'pending', lambda: 0)() > 0
+                ready, _, _ = select.select([self.connection, upstream], [], [], 0 if pending else 90)
+                if pending and upstream not in ready:
+                    ready.append(upstream)
                 if not ready:
                     break
                 for source in ready:
@@ -84,8 +92,9 @@ class ProxyServer(socketserver.ThreadingTCPServer):
     daemon_threads = True
     request_queue_size = 64
 
-    def __init__(self, port):
+    def __init__(self, port, open_tunnel=None):
         self.slots = threading.BoundedSemaphore(64)
+        self.open_tunnel = open_tunnel or (lambda authority: socket.create_connection(destination(authority), timeout=15))
         super().__init__(('127.0.0.1', port), ConnectHandler)
 
 

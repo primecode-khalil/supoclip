@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { RecordingDashboard } from "./recording-dashboard";
+import { ProxyDashboard } from "@/components/proxy/proxy-dashboard";
 
 const session = vi.hoisted(() => ({ data: { user: { id: "owner", is_admin: true } }, isPending: false }));
 vi.mock("@/lib/auth-client", () => ({ useSession: () => session }));
@@ -32,6 +32,7 @@ beforeEach(() => {
     if (url.endsWith("home-proxy")) return statusError
       ? Response.json({ detail: "Unable to check the connection" }, { status: 503 })
       : Response.json(statusResponse ?? status);
+    if (url === "/api/proxy") return Response.json({ connections: [], max_url_connections: 10 });
     if (url.includes("social")) return Response.json({ connections: [] });
     return Response.json({ channels: [], total: 0 });
   });
@@ -39,8 +40,8 @@ beforeEach(() => {
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 async function renderCard() {
-  render(<RecordingDashboard />);
-  const card = await screen.findByRole("region", { name: "Home connection" });
+  render(<ProxyDashboard />);
+  const card = await screen.findByRole("region", { name: "Mac home connection" });
   await waitFor(() => expect(within(card).queryByText("Checking connection…")).not.toBeInTheDocument());
   return within(card);
 }
@@ -56,9 +57,9 @@ it("offers admin setup without creating or exposing a setup command", async () =
 });
 it("does not show or request home connection for non-admins", async () => {
   session.data.user.is_admin = false;
-  render(<RecordingDashboard />);
-  await screen.findByText("Add your first channel");
-  expect(screen.queryByRole("region", { name: "Home connection" })).not.toBeInTheDocument();
+  render(<ProxyDashboard />);
+  await screen.findByText(/Administrators manage proxy connections/);
+  expect(screen.queryByRole("region", { name: "Mac home connection" })).not.toBeInTheDocument();
   expect(fetchMock.mock.calls.some(([url]) => url.includes("home-proxy"))).toBe(false);
 });
 it("explains an unconfigured server without offering setup", async () => {
@@ -79,10 +80,10 @@ it.each([{ response: [] }, { response: {} }, { response: { ...paired, connected:
 it("replaces stale connected status when a 15-second poll fails", async () => {
   vi.useFakeTimers();
   status = { ...paired, connected: true };
-  await act(async () => { render(<RecordingDashboard />); });
-  const card = within(screen.getByRole("region", { name: "Home connection" }));
+  await act(async () => { render(<ProxyDashboard />); });
+  const card = within(screen.getByRole("region", { name: "Mac home connection" }));
   expect(card.getByText("Connected", { exact: true })).toBeVisible();
-  expect(card.getByText(/Tunnel connected.*YouTube access has not been verified/)).toBeVisible();
+  expect(card.getByText(/Tunnel connected.*Test YouTube/)).toBeVisible();
   statusError = true;
   await act(async () => { vi.advanceTimersByTime(15_000); });
   expect(card.getByText("Connection status unavailable", { exact: true })).toBeVisible();
@@ -139,8 +140,8 @@ it("clears the secret when its command expires", async () => {
 });
 it("polls every 15 seconds and clears the command once pairing completes", async () => {
   vi.useFakeTimers();
-  await act(async () => { render(<RecordingDashboard />); });
-  const card = within(screen.getByRole("region", { name: "Home connection" }));
+  await act(async () => { render(<ProxyDashboard />); });
+  const card = within(screen.getByRole("region", { name: "Mac home connection" }));
   await act(async () => { fireEvent.click(card.getByRole("button", { name: "Set up my Mac" })); });
   status = { ...paired, connected: true };
   await act(async () => { vi.advanceTimersByTime(15_000); });
@@ -170,10 +171,12 @@ it("reports disconnect failure without claiming the Mac was disconnected", async
 it("does not overlap slow status polls and clears connected when the pending check fails", async () => {
   vi.useFakeTimers();
   status = { ...paired, connected: true };
-  await act(async () => { render(<RecordingDashboard />); });
-  const card = within(screen.getByRole("region", { name: "Home connection" }));
+  await act(async () => { render(<ProxyDashboard />); });
+  const card = within(screen.getByRole("region", { name: "Mac home connection" }));
   const rejectChecks: Array<(error: Error) => void> = [];
-  fetchMock.mockImplementation(() => new Promise<Response>((_resolve, reject) => { rejectChecks.push(reject); }));
+  fetchMock.mockImplementation((url) => url === '/api/recording/home-proxy'
+    ? new Promise<Response>((_resolve, reject) => { rejectChecks.push(reject); })
+    : Promise.resolve(Response.json({ connections: [], max_url_connections: 10 })));
   await act(async () => { vi.advanceTimersByTime(30_000); });
   const pendingCount = rejectChecks.length;
   await act(async () => { rejectChecks.forEach((reject) => reject(new Error("Network connection lost"))); });
@@ -186,8 +189,8 @@ it("does not overlap slow status polls and clears connected when the pending che
 it("checks immediately when React remounts effects in development", async () => {
   vi.useFakeTimers();
   status = { ...paired, connected: true };
-  await act(async () => { render(<RecordingDashboard />, { reactStrictMode: true }); });
-  const card = within(screen.getByRole("region", { name: "Home connection" }));
+  await act(async () => { render(<ProxyDashboard />, { reactStrictMode: true }); });
+  const card = within(screen.getByRole("region", { name: "Mac home connection" }));
   expect(card.getByText("Connected", { exact: true })).toBeVisible();
 });
 
